@@ -1,0 +1,62 @@
+From 596cf19c0c4c92b31c4ef315a0278586b0772b93 Mon Sep 17 00:00:00 2001
+From: He Junyan <junyan.he@intel.com>
+Date: Tue, 24 Jun 2025 21:40:26 +0800
+Subject: [PATCH 1/3] h266parser: Fix overflow when parsing subpic_level_info
+
+1. non_subpic_layers_fraction, ref_level_idc and ref_level_fraction_minus1
+   fields should not have the GST_H266_MAX_SUBLAYERS limitation.
+2. Should check max_sublayers_minus1, no more than GST_H266_MAX_SUBLAYERS-1
+
+Fixes ZDI-CAN-27381, CVE-2025-6663
+
+Closes: https://gitlab.freedesktop.org/gstreamer/gstreamer/-/issues/4503
+Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/9295>
+---
+ .../gst-libs/gst/codecparsers/gsth266parser.c             | 4 ++++
+ .../gst-libs/gst/codecparsers/gsth266parser.h             | 8 +++++---
+ 2 files changed, 9 insertions(+), 3 deletions(-)
+
+diff --git a/gst-libs/gst/codecparsers/gsth266parser.c b/gst-libs/gst/codecparsers/gsth266parser.c
+index ec861dea47..0f52e5fa4e 100644
+--- a/gst-libs/gst/codecparsers/gsth266parser.c
++++ b/gst-libs/gst/codecparsers/gsth266parser.c
+@@ -1620,6 +1620,10 @@ gst_h266_parser_parse_subpic_level_info (GstH266SubPicLevelInfo * sli,
+     READ_UE_MAX (nr, sli->num_subpics_minus1, GST_H266_MAX_SLICES_PER_AU - 1);
+
+   READ_UINT8 (nr, sli->max_sublayers_minus1, 3);
++  /* The value of sli_max_sublayers_minus1 shall be equal to
++     vps_max_sublayers_minus1. */
++  CHECK_ALLOWED_MAX (sli->max_sublayers_minus1, GST_H266_MAX_SUBLAYERS - 1);
++
+   READ_UINT8 (nr, sli->sublayer_info_present_flag, 1);
+
+   while (!nal_reader_is_byte_aligned (nr))
+diff --git a/gst-libs/gst/codecparsers/gsth266parser.h b/gst-libs/gst/codecparsers/gsth266parser.h
+index a53e0ea615..a9df8d86c7 100644
+--- a/gst-libs/gst/codecparsers/gsth266parser.h
++++ b/gst-libs/gst/codecparsers/gsth266parser.h
+@@ -43,6 +43,8 @@ G_BEGIN_DECLS
+ /* 7.4.3.3 The value of vps_max_sublayers_minus1
+  * shall be in the range of 0 to 6, inclusive */
+ #define GST_H266_MAX_SUBLAYERS 7
++/* 3-bit minus1 value, so max is 7+1 */
++#define GST_H266_MAX_SLI_REF_LEVELS 8
+ /* 7.4.3.3 vps_num_output_layer_sets_minus2 is u(8) */
+ #define GST_H266_MAX_TOTAL_NUM_OLSS 257
+ /* 7.4.3.3 vps_num_ptls_minus1 shall be less than TotalNumOlss,
+@@ -3171,9 +3173,9 @@ struct _GstH266SubPicLevelInfo {
+   guint16 num_subpics_minus1;
+   guint8 max_sublayers_minus1;
+   guint8 sublayer_info_present_flag;
+-  guint8 non_subpic_layers_fraction[GST_H266_MAX_SUBLAYERS][GST_H266_MAX_SUBLAYERS];
+-  guint8 ref_level_idc[GST_H266_MAX_SUBLAYERS][GST_H266_MAX_SUBLAYERS];
+-  guint8 ref_level_fraction_minus1[GST_H266_MAX_SUBLAYERS][GST_H266_MAX_SLICES_PER_AU][GST_H266_MAX_SUBLAYERS];
++  guint8 non_subpic_layers_fraction[GST_H266_MAX_SLI_REF_LEVELS][GST_H266_MAX_SUBLAYERS];
++  guint8 ref_level_idc[GST_H266_MAX_SLI_REF_LEVELS][GST_H266_MAX_SUBLAYERS];
++  guint8 ref_level_fraction_minus1[GST_H266_MAX_SLI_REF_LEVELS][GST_H266_MAX_SLICES_PER_AU][GST_H266_MAX_SUBLAYERS];
+ };
+
+ /**
+--
+2.50.0
+

@@ -1,2 +1,11 @@
 02_opencv-data-path.patch
 Skip-failing-tests.patch
+0001-h266parser-Fix-overflow-when-parsing-subpic_level_in.patch
+CVE-2026-3084.patch
+CVE-2026-3081.patch
+CVE-2026-3086.patch
+CVE-2026-3082.patch
+CVE-2026-2923.patch
+CVE-2026-52718.patch
+CVE-2026-52719.patch
+CVE-2026-53701.patch
