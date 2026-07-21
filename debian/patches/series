@@ -9,3 +9,8 @@ CVE-2026-2923.patch
 CVE-2026-52718.patch
 CVE-2026-52719.patch
 CVE-2026-53701.patch
+gst-qti-oss-patches/0001-waylandsink-release-pending-buffers-in-composer.patch
+gst-qti-oss-patches/0002-waylandsink-support-gap-buffers.patch
+gst-qti-oss-patches/0003-waylandsink-increase-timeout-limitation-in-gst_wl_wi.patch
+gst-qti-oss-patches/0004-wayland-Add-support-for-NV12_Q08C-compressed-8-bit-f.patch
+gst-qti-oss-patches/0005-waylandsink-make-sure-self-window-is-not-NULL-before.patch

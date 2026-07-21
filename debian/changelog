@@ -1,3 +1,14 @@
+gst-plugins-bad1.0 (1.26.2-3+deb13u2+qcom1) UNRELEASED; urgency=medium
+
+  * add qcom pacthes for v1.26.2
+  * d/patches: add gst-qti-oss-patches/0001-waylandsink-release-pending-buffers-in-composer.patch
+  * d/patches: add gst-qti-oss-patches/0002-waylandsink-support-gap-buffers.patch
+  * d/patches: add gst-qti-oss-patches/0003-waylandsink-increase-timeout-limitation-in-gst_wl_wi.patch
+  * d/patches: add gst-qti-oss-patches/0004-wayland-Add-support-for-NV12_Q08C-compressed-8-bit-f.patch
+  * d/patches: add gst-qti-oss-patches/0005-waylandsink-make-sure-self-window-is-not-NULL-before.patch
+
+ -- Bala Sai Kosuri <bkosuri@qti.qualcomm.com>  Tue, 21 Jul 2026 09:54:41 -0700
+
 gst-plugins-bad1.0 (1.26.2-3+deb13u2) trixie-security; urgency=medium
 
   * CVE-2026-52718
