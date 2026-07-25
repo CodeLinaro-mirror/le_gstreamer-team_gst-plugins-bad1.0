@@ -400,7 +400,7 @@ libgstplay-1.0.so.0 libgstreamer-plugins-extra1.0-0 #MINVER#
  gst_play_config_get_position_update_interval@Base 1.27.2
  gst_play_config_get_seek_accurate@Base 1.27.2
  gst_play_config_get_user_agent@Base 1.27.2
- gst_play_config_set_loop@Base 1.27.90-1ubuntu3
+ gst_play_config_set_loop@Base 1.27.90
  gst_play_config_set_pipeline_dump_in_error_details@Base 1.27.2
  gst_play_config_set_position_update_interval@Base 1.27.2
  gst_play_config_set_seek_accurate@Base 1.27.2
@@ -435,8 +435,8 @@ libgstplay-1.0.so.0 libgstreamer-plugins-extra1.0-0 #MINVER#
  gst_play_get_volume@Base 1.27.2
  gst_play_has_color_balance@Base 1.27.2
  gst_play_is_play_message@Base 1.27.2
- gst_play_loop_get_name@Base 1.27.90-1ubuntu3
- gst_play_loop_get_type@Base 1.27.90-1ubuntu3
+ gst_play_loop_get_name@Base 1.27.90
+ gst_play_loop_get_type@Base 1.27.90
  gst_play_media_info_get_audio_streams@Base 1.27.2
  gst_play_media_info_get_container_format@Base 1.27.2
  gst_play_media_info_get_duration@Base 1.27.2
