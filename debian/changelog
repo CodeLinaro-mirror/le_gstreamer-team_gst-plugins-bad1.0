@@ -11,6 +11,12 @@ gst-plugins-bad1.0 (1.28.5-1) unstable; urgency=medium
 
  -- Marc Leeman <marc.leeman@gmail.com>  Thu, 16 Jul 2026 16:03:59 +0200
 
+gst-plugins-bad1.0 (1.28.4-1ubuntu2) stonking; urgency=medium
+
+  * No-change rebuild against libssl4
+
+ -- Ravi Kant Sharma <ravi.kant.sharma@canonical.com>  Sat, 25 Jul 2026 07:17:08 +0000
+
 gst-plugins-bad1.0 (1.28.4-1ubuntu1) stonking; urgency=medium
 
   [ Charles ]
