@@ -56,6 +56,13 @@ conf_flags += -Ddirectfb=disabled
 # Debian is not android
 conf_flags += -Dandroidmedia=disabled
 
+# We ship nothing from tests/examples/. With -Dauto_features=enabled every
+# example dependency becomes mandatory. sdl3 is the one that hurts: not in
+# Build-Depends, only arrives via libfluidsynth-dev. Debian disables vulkan
+# over it. Upstream says sdl3 is only for tests/examples/vulkan, see
+# https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12030
+conf_flags += -Dexamples=disabled
+
 # Enable msdk with the oneVPL API on amd64, x32 (only archs where libvpl-dev is available)
 ifneq (,$(filter $(DEB_HOST_ARCH),amd64 x32))
 conf_flags += -Dmsdk=enabled -Dmfx_api=oneVPL
@@ -135,8 +142,7 @@ override_dh_makeshlibs:
 	dh_makeshlibs -plibgstreamer-plugins-extra1.0-0 -X "/usr/lib/$(DEB_HOST_MULTIARCH)/gstreamer-1.0" -V 'libgstreamer-plugins-extra1.0-0 (>= $(gst_version))' -- -c4
 	dh_makeshlibs -plibgstreamer-opencv1.0-0 -X "/usr/lib/$(DEB_HOST_MULTIARCH)/gstreamer-1.0" -V 'libgstreamer-opencv1.0-0 (>= $(gst_version))' -- -c4
 
-override_dh_install:
-	dh_install
+execute_after_dh_install:
 ifeq ($(DEB_HOST_ARCH_OS),linux)
 	dh_install -pgstreamer1.0-plugins-bad debian/tmp/usr/lib/$(DEB_HOST_MULTIARCH)/gstreamer-1.0/libgstdvb.so
 	dh_install -pgstreamer1.0-plugins-bad debian/tmp/usr/lib/$(DEB_HOST_MULTIARCH)/gstreamer-1.0/libgstfbdevsink.so
@@ -178,10 +184,6 @@ endif
 	dh_install -pgstreamer1.0-plugins-bad debian/tmp/usr/lib/$(DEB_HOST_MULTIARCH)/gstreamer-1.0/libgstwebrtcdsp.so
 endif
 
-ifneq (,$(filter $(DEB_HOST_ARCH),armel arm64 armhf hurd))
-	dh_install -pgstreamer1.0-plugins-bad debian/tmp/usr/lib/$(DEB_HOST_MULTIARCH)/gstreamer-1.0/libgstnvcodec.so
-endif
-
 ifneq (,$(filter $(DEB_HOST_ARCH),amd64 arm64 armel armhf mips64el ppc64el riscv64 s390x alpha hppa hurd-i386 m68k powerpc ppc64 sparc64))
 	dh_install -pgstreamer1.0-plugins-bad debian/tmp/usr/lib/$(DEB_HOST_MULTIARCH)/gstreamer-1.0/libgstzxing.so
 endif
@@ -198,10 +200,10 @@ ifeq ($(DEB_HOST_ARCH_ENDIAN),little)
 	dh_install -pgstreamer1.0-plugins-bad debian/tmp/usr/lib/$(DEB_HOST_MULTIARCH)/gstreamer-1.0/libgstldac.so
 endif
 
-# REVIEW: All the moving below is to support the -extra package
-# set. Avoided using the .install files since that would require
-# expanding globs that exist in -bad. However, this also got very
-# ugly...
+# Below: the -dev, .gir and .typelib half of the plugins-extra split.
+# Not done with .install files. The -bad entries are globs, so each would need
+# narrowing to exclude these paths. Longer and easier to get wrong than moving
+# afterwards. Verbose, but every destination is spelled out.
 	mkdir -p debian/libgstreamer-plugins-extra1.0-dev/usr/share/gir-1.0
 	mkdir -p debian/libgstreamer-plugins-extra1.0-dev/usr/include/gstreamer-1.0/gst
 	mkdir -p debian/libgstreamer-plugins-extra1.0-dev/usr/lib/$(DEB_HOST_MULTIARCH)/pkgconfig
