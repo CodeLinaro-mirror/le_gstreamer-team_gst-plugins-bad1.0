@@ -263,7 +263,7 @@ Depends: gir1.2-gst-plugins-bad-1.0 (= ${binary:Version}),
          libgstreamer-plugins-bad1.0-0 (= ${binary:Version}),
          libgstreamer-plugins-base1.0-dev,
          libgstreamer-plugins-extra1.0-0 (= ${binary:Version}),
-         libgstreamer-plugins-extra1.0-dev,
+         libgstreamer-plugins-extra1.0-dev (= ${binary:Version}),
          libgstreamer1.0-dev,
          libopencv-dev (>= 2.3.0) [amd64 arm64 armel armhf mips64el ppc64el riscv64 s390x alpha powerpc ppc64 sparc64],
          ${gir:Depends},
@@ -312,7 +312,7 @@ Description: GObject introspection data for the GStreamer libraries from the "ba
 Package: gstreamer1.0-plugins-extra
 Architecture: any
 Multi-Arch: same
-Depends: gstreamer1.0-plugins-base (>= 1.26.0),
+Depends: gstreamer1.0-plugins-base (>= 1.28.0),
          gstreamer1.0-plugins-good (>= 1.28.0-1ubuntu3),
          libgstreamer-plugins-extra1.0-0 (= ${binary:Version}),
          ${misc:Depends},
