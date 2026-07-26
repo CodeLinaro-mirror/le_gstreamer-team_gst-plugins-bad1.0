@@ -1,3 +1,58 @@
+gst-plugins-bad1.0 (1.28.5-2ubuntu1) stonking; urgency=medium
+
+  * Merge with Debian (LP: #2161854). Remaining changes:
+    - d/rules:
+      + Disable LTO on ppc64el & s390x.
+      + Enable Vulkan. Debian disables it over sdl3, which is not needed.
+      + Disable examples. We ship none. -Dauto_features=enabled makes every
+        example dependency mandatory, sdl3 included. sdl3 is not in
+        Build-Depends, it only arrives via libfluidsynth-dev. Upstream MR
+        12030 confirms sdl3 is only used by tests/examples/vulkan.
+    - d/gbp.conf: Ubuntu VCS tags.
+    - Don't build wpewebkit plugins (gstreamer1.0-wpe).
+    - Don't build the opencv binary packages on i386, avoiding a large tree
+      of numeric-related dependencies for a binary package it's not required
+      to support.
+    - d/control, d/gstreamer1.0-plugins-bad.install, d/rules: Disable
+      unavailable features on i386
+      + Don't require these Build-Depends on i386: libfreeaptx-dev,
+        liblrdf0-dev, libltc-dev, libneon27-dev, libopenni2-dev,
+        libqrencode-dev, libtensorflow-lite-dev, libvulkan-dev, and
+        libzxing-dev.
+      + Disable ladspa, neon, openaptx, openni2, qroverlay, vulkan,
+        tflite, and hip on i386, since they're not built there for Ubuntu.
+    - d/tests/control: Skip build-and-test and gir1.2-gst-plugins-bad-1.0 on
+      i386. Ubuntu runs i386 autopkgtests in an amd64 testbed. No i386
+      pkg-config for meson, and amd64 python3-gi cannot load i386 typelibs.
+    - d/libgstreamer-plugins-bad1.0-0.install:
+      + Stop installing basecamerabin, codecparsers, codecs, photography
+        and play - plugins which have moved to -extra.
+      + d/rules: Remove these modules from the -bad package.
+    - plugins-extra split:
+      + Introduce a new package containing a subset of -bad plugins
+        that will be included in Ubuntu main.
+        - libgstcamerabin, libgstcodecparsers, libgstcodecs,
+          libgstphotography, libgstplay
+      + Have gstreamer1.0-plugins-bad depend on gstreamer1.0-plugins-extra.
+      + Replace+Break gstreamer1.0-plugins-good versions where -bad
+        plugins were patched in.
+      + libgstreamer-plugins-extra1.0-0.symbols: Add symbol file for the
+        new package.
+      + d/rules: Manually move the remaining components from -bad into -extra.
+      + d/tests/control: gir1.2-gst-plugins-bad-1.0 test now also depends on
+        gir1.2-gst-plugins-extra-1.0. It checks GstPlay, moved by the split.
+    - d/libgstreamer-plugins-extra1.0-0.symbols: drop spurious debian
+      revision parts from certain symbols.
+    - d/patches/openssl4-dtls-bio-retry-read.patch: Fix FTBFS with
+      OpenSSL4 (Closes: 1138375) (LP: #2154923)
+  * Rediff patches.
+  * d/rules: Drop a stale arch-conditional libgstnvcodec.so install. The linux
+    block already installs it, so on arm it ran twice. 'hurd' is not a
+    DEB_HOST_ARCH value. Debian reverted the change it came from, the revert
+    never reached our copy.
+
+ -- Charles <charles05@canonical.com>  Tue, 28 Jul 2026 13:08:55 +0100
+
 gst-plugins-bad1.0 (1.28.5-2) unstable; urgency=medium
 
   * d/control: gstreamer1.0-wpe, depend on gstreamer1.0-gl (Closes: #1141906)
