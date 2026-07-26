@@ -1,7 +1,9 @@
+# Not i386. Ubuntu runs i386 tests in an amd64 testbed, i386 foreign.
+# No i386 pkg-config, so meson cannot resolve gstreamer-1.0.
 Tests: build-and-test
 Depends: @builddeps@
 Restrictions: allow-stderr
-Architecture: !riscv64
+Architecture: !riscv64 !i386
 
 Test-Command: gst-transcoder-1.0 --help
 Depends: gstreamer1.0-plugins-bad-apps
@@ -12,10 +14,14 @@ Depends: build-essential,
          libgstreamer-plugins-bad1.0-dev,
 Restrictions: superficial, allow-stderr
 
+# Not i386. amd64 python3-gi cannot load i386 typelibs.
+# gir1.2-gst-plugins-extra-1.0 is for GstPlay, moved there by the split.
 Tests: gir1.2-gst-plugins-bad-1.0
 Depends: gir1.2-gst-plugins-bad-1.0,
+         gir1.2-gst-plugins-extra-1.0,
          python3-gi,
 Restrictions: superficial
+Architecture: !i386
 
 # NOTE: gstreamer1.0-validate is, at the time of writing, not
 # available in Debian. Mark this test as skip-not-installable for now.
