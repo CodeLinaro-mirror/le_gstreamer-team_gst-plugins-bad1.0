@@ -1,4 +1,4 @@
-gst-plugins-bad1.0 (1.26.2-3+deb13u2+qcom1) UNRELEASED; urgency=medium
+gst-plugins-bad1.0 (1.26.2-3+deb13u3+qcom1) trixie; urgency=medium
 
   * add qcom pacthes for v1.26.2
   * d/patches: add gst-qti-oss-patches/0001-waylandsink-release-pending-buffers-in-composer.patch
@@ -8,7 +8,7 @@ gst-plugins-bad1.0 (1.26.2-3+deb13u2+qcom1) UNRELEASED; urgency=medium
   * d/patches: add gst-qti-oss-patches/0005-waylandsink-make-sure-self-window-is-not-NULL-before.patch
   * Update mail ids to qti.qualcomm.com
 
- -- Bala Sai Kosuri <bkosuri@qti.qualcomm.com>  Tue, 21 Jul 2026 09:54:41 -0700
+ -- Bala Sai Kosuri <bkosuri@qti.qualcomm.com>  Tue, 25 Aug 2026 09:43:27 -0700
 
 gst-plugins-bad1.0 (1.26.2-3+deb13u3) trixie-security; urgency=medium
 
