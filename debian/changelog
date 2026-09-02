@@ -1,3 +1,14 @@
+gst-plugins-bad1.0 (1.28.2-1+qcom1) resolute; urgency=medium
+
+  * add qcom patches for v1.28.2
+  * d/patches: add gst-qti-oss-patches/0001-wayland-Add-support-for-NV12_Q08C-compressed-8-bit-f.patch
+  * d/patches: add gst-qti-oss-patches/0002-waylandsink-Release-pending-buffers-during-PAUSED-to.patch
+  * d/patches: add gst-qti-oss-patches/0003-waylandsink-support-gap-buffers.patch
+  * d/patches: add gst-qti-oss-patches/0004-wayland-handle-padded-buffers-in-wl_shm-buffer-creat.patch
+  * remove gstreamer1.0-wpe as dependencies are not available
+
+ -- Bala Sai Kosuri <bkosuri@qti.qualcomm.com>  Wed, 02 Sep 2026 08:38:36 +0530
+
 gst-plugins-bad1.0 (1.28.2-1) unstable; urgency=medium
 
   * New upstream version 1.28.2
