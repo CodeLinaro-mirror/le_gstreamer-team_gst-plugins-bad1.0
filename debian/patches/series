@@ -19,3 +19,4 @@ gst-qti-oss-patches/0002-waylandsink-support-gap-buffers.patch
 gst-qti-oss-patches/0003-waylandsink-increase-timeout-limitation-in-gst_wl_wi.patch
 gst-qti-oss-patches/0004-wayland-Add-support-for-NV12_Q08C-compressed-8-bit-f.patch
 gst-qti-oss-patches/0005-waylandsink-make-sure-self-window-is-not-NULL-before.patch
+gst-qti-oss-patches/0006-wayland-handle-padded-buffers-in-wl_shm-buffer-creat.patch
