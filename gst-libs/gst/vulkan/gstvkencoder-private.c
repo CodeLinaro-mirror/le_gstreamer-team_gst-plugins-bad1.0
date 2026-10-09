@@ -222,6 +222,9 @@ gst_vulkan_encoder_picture_init (GstVulkanEncoderPicture * pic,
   size_aligned = GST_ROUND_UP_N (size,
       priv->caps.caps.minBitstreamBufferSizeAlignment);
 
+  /* No slot attributed yet; -1 avoids releasing a live slot in clear(). */
+  pic->dpb_slot.slotIndex = -1;
+
   if (priv->layered_dpb) {
     g_assert (priv->layered_buffer);
     pic->dpb_buffer = gst_buffer_ref (priv->layered_buffer);
@@ -275,7 +278,7 @@ gst_vulkan_encoder_picture_clear (GstVulkanEncoderPicture * pic,
 
   priv = gst_vulkan_encoder_get_instance_private (self);
 
-  if (pic->dpb_slot.slotIndex > 0) {
+  if (pic->dpb_slot.slotIndex >= 0) {
     priv->slots[pic->dpb_slot.slotIndex] = NULL;
     pic->dpb_slot.slotIndex = -1;
   }
@@ -1040,6 +1043,24 @@ _setup_rate_control (GstVulkanEncoder * self, GstVulkanEncoderPicture * pic,
       priv->callbacks_user_data);
 }
 
+static gboolean
+_add_dpb_dependency_and_barrier (GstVulkanOperation * exec, GstBuffer * buffer,
+    VkAccessFlags2 access)
+{
+  if (!gst_vulkan_operation_add_dependency_frame (exec, buffer,
+          VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+          VK_PIPELINE_STAGE_2_VIDEO_ENCODE_BIT_KHR))
+    return FALSE;
+
+  if (!gst_vulkan_operation_add_frame_barrier (exec, buffer,
+          VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+          VK_PIPELINE_STAGE_2_VIDEO_ENCODE_BIT_KHR, access,
+          VK_IMAGE_LAYOUT_VIDEO_ENCODE_DPB_KHR, NULL))
+    return FALSE;
+
+  return TRUE;
+}
+
 /**
  * gst_vulkan_encoder_encode:
  * @self: a #GstVulkanEncoder
@@ -1216,14 +1237,16 @@ gst_vulkan_encoder_encode (GstVulkanEncoder * self, GstVideoInfo * info,
       VK_ACCESS_2_VIDEO_ENCODE_READ_BIT_KHR,
       VK_IMAGE_LAYOUT_VIDEO_ENCODE_SRC_KHR, NULL);
 
-  gst_vulkan_operation_add_dependency_frame (priv->exec, pic->dpb_buffer,
-      VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-      VK_PIPELINE_STAGE_2_VIDEO_ENCODE_BIT_KHR);
-  gst_vulkan_operation_add_frame_barrier (priv->exec, pic->dpb_buffer,
-      VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-      VK_PIPELINE_STAGE_2_VIDEO_ENCODE_BIT_KHR,
-      VK_ACCESS_2_VIDEO_ENCODE_READ_BIT_KHR,
-      VK_IMAGE_LAYOUT_VIDEO_ENCODE_DPB_KHR, NULL);
+  /* this also adds the layered dpb if it's the case */
+  _add_dpb_dependency_and_barrier (priv->exec, pic->dpb_buffer,
+      VK_ACCESS_2_VIDEO_ENCODE_WRITE_BIT_KHR);
+
+  if (!priv->layered_dpb) {
+    for (i = 0; i < nb_refs; i++) {
+      _add_dpb_dependency_and_barrier (priv->exec, ref_pics[i]->dpb_buffer,
+          VK_ACCESS_2_VIDEO_ENCODE_READ_BIT_KHR);
+    }
+  }
 
   barriers = gst_vulkan_operation_retrieve_image_barriers (priv->exec);
 
