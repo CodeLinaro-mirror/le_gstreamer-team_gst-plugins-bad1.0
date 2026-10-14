@@ -15,7 +15,6 @@ usr/lib/*/gstreamer-1.0/libgstautoconvert.so
 usr/lib/*/gstreamer-1.0/libgstbayer.so
 usr/lib/*/gstreamer-1.0/libgstbs2b.so
 usr/lib/*/gstreamer-1.0/libgstbz2.so
-usr/lib/*/gstreamer-1.0/libgstcamerabin.so
 usr/lib/*/gstreamer-1.0/libgstchromaprint.so
 usr/lib/*/gstreamer-1.0/libgstclosedcaption.so
 usr/lib/*/gstreamer-1.0/libgstcodecalpha.so
