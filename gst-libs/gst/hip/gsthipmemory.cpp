@@ -490,6 +490,7 @@ hip_mem_copy (GstMemory * mem, gssize offset, gssize size)
     GST_ERROR_OBJECT (self, "Failed to set device");
     gst_memory_unmap (mem, &src_info);
     gst_memory_unmap (copy, &dst_info);
+    gst_memory_unref (copy);
 
     return nullptr;
   }
@@ -863,7 +864,7 @@ gst_hip_allocator_alloc (GstHipAllocator * allocator,
 
 /**
  * gst_hip_allocator_set_active:
- * @allocator: a #GstCudaAllocator
+ * @allocator: a #GstHipAllocator
  * @active: the new active state
  *
  * Controls the active state of @allocator.
