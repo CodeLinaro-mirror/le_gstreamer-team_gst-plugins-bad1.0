@@ -146,7 +146,7 @@ Package: gstreamer1.0-plugins-bad
 Architecture: any
 Multi-Arch: same
 Depends: gstreamer1.0-plugins-base (>= 1.28.0),
-         gstreamer1.0-plugins-good (>= 1.28.0-1ubuntu3),
+         gstreamer1.0-plugins-good (>= 1.28.0),
          libgstreamer-plugins-bad1.0-0 (= ${binary:Version}),
          gstreamer1.0-plugins-extra (= ${binary:Version}),
          libgstreamer-plugins-extra1.0-0 (= ${binary:Version}),
