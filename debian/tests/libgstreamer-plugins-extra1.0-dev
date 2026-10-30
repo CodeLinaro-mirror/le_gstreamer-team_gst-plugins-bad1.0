@@ -1,0 +1,83 @@
+#!/bin/sh
+# Build, link and run against each library of libgstreamer-plugins-extra1.0-dev
+# with the bad -dev absent, so anything left behind in it by the split fails.
+
+set -eux
+
+WORKDIR=$(mktemp -d)
+export XDG_RUNTIME_DIR="$WORKDIR"
+cleanup () {
+    rm -fr "${WORKDIR:?}"
+}
+trap cleanup 0 INT QUIT ABRT PIPE TERM
+cd "$WORKDIR"
+
+if [ -n "${DEB_HOST_GNU_TYPE:-}" ]; then
+    CROSS_COMPILE="$DEB_HOST_GNU_TYPE-"
+else
+    CROSS_COMPILE=
+fi
+PKGCONF="${CROSS_COMPILE}pkgconf"
+
+if dpkg-query -W -f='${db:Status-Status}\n' libgstreamer-plugins-bad1.0-dev 2>/dev/null \
+        | grep -qx installed; then
+    echo "libgstreamer-plugins-bad1.0-dev is installed, the test proves nothing"
+    exit 1
+fi
+
+# One case per library: name, pkg-config module (- if none upstream),
+# header, and a call into the library.
+cat > cases <<'EOF'
+basecamerabinsrc|-|gst/basecamerabinsrc/gstbasecamerasrc.h|gst_base_camera_src_get_type ()
+codecparsers|gstreamer-codecparsers-1.0|gst/codecparsers/gsth264parser.h|(gst_h264_nal_parser_free (gst_h264_nal_parser_new ()), G_TYPE_OBJECT)
+codecs|-|-|gst_h264_decoder_get_type ()
+photography|gstreamer-photography-1.0|gst/interfaces/photography.h|gst_photography_get_type ()
+play|gstreamer-play-1.0|gst/play/play.h|gst_play_get_type ()
+va|gstreamer-va-1.0|gst/va/gstva.h|gst_va_display_get_type ()
+EOF
+
+# Every library shipped must have a case, and every case a library.
+dpkg -L libgstreamer-plugins-extra1.0-dev \
+    | sed -n 's|^/usr/lib/[^/]*/libgst\(.*\)-1\.0\.so$|\1|p' | sort > shipped
+cut -d'|' -f1 cases | sort > covered
+diff -u covered shipped
+
+# Every .pc shipped must have a case.
+dpkg -L libgstreamer-plugins-extra1.0-dev \
+    | sed -n 's|^/usr/lib/[^/]*/pkgconfig/\(.*\)\.pc$|\1|p' | sort > shipped-pc
+cut -d'|' -f2 cases | grep -vx -- - | sort > covered-pc
+diff -u covered-pc shipped-pc
+
+while IFS='|' read -r lib module header call; do
+    if [ "$module" = - ]; then
+        flags="$("$PKGCONF" --cflags --libs gstreamer-video-1.0) -lgst$lib-1.0"
+    else
+        "$PKGCONF" --exists --print-errors "$module"
+        flags=$("$PKGCONF" --cflags --libs "$module")
+    fi
+    if [ "$header" = - ]; then
+        # libgstcodecs installs no headers upstream.
+        include="GType gst_h264_decoder_get_type (void);"
+    else
+        include="#include <$header>"
+    fi
+    cat > "$lib.c" <<EOF
+#include <gst/gst.h>
+$include
+
+int main (void)
+{
+    GType t;
+
+    gst_init (NULL, NULL);
+    t = $call;
+    g_assert_cmpuint (t, !=, G_TYPE_INVALID);
+    return 0;
+}
+EOF
+    # Deliberately word-splitting, that's how pkg-config works:
+    # shellcheck disable=SC2086
+    "${CROSS_COMPILE}gcc" -Wall -Werror -DGST_USE_UNSTABLE_API -Wl,--no-undefined -o "$lib" "$lib.c" $flags
+    ./"$lib"
+    echo "$lib: OK"
+done < cases

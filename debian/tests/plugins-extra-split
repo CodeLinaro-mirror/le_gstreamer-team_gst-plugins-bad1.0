@@ -1,0 +1,154 @@
+#!/bin/sh
+# Check the -bad/-extra split from package metadata, so a file moved to
+# the wrong package fails here, not in some reverse dependency:
+#  - a .pc ships with the -dev symlink of every library in its Libs
+#  - a -dev symlink resolves to a library the -dev package depends on
+#  - a .gir has its typelib, its includes and its shared-library reachable
+#    through declared dependencies, not transitively
+#  - the extra .pc files' Requires are satisfied by declared dependencies
+#  - every NEEDED library is owned by a package the binary depends on
+#  - nothing in -extra depends on, or links against, -bad
+
+set -eu
+
+WORKDIR=$(mktemp -d)
+cleanup () {
+    rm -fr "${WORKDIR:?}"
+}
+trap cleanup 0 INT QUIT ABRT PIPE TERM
+
+if [ -n "${DEB_HOST_GNU_TYPE:-}" ]; then
+    CROSS_COMPILE="$DEB_HOST_GNU_TYPE-"
+else
+    CROSS_COMPILE=
+fi
+READELF="${CROSS_COMPILE}readelf"
+
+BAD_RE='^(gstreamer1\.0-plugins-bad|libgstreamer-plugins-bad1\.0-0|libgstreamer-plugins-bad1\.0-dev|gir1\.2-gst-plugins-bad-1\.0|libgstreamer-opencv1\.0-0|gstreamer1\.0-opencv)$'
+EXTRA_PKGS="libgstreamer-plugins-extra1.0-0 libgstreamer-plugins-extra1.0-dev gstreamer1.0-plugins-extra gir1.2-gst-plugins-extra-1.0"
+DEV_PKGS="libgstreamer-plugins-bad1.0-dev libgstreamer-plugins-extra1.0-dev"
+ELF_PKGS="libgstreamer-plugins-extra1.0-0 gstreamer1.0-plugins-extra libgstreamer-plugins-bad1.0-0 gstreamer1.0-plugins-bad"
+
+failures=0
+fail () {
+    echo "FAIL: $*"
+    failures=$((failures + 1))
+}
+
+# Owning package of a path, without the :arch qualifier.
+owner () {
+    dpkg-query -S "$1" 2>/dev/null | sed -n '1s/[:,].*//p'
+}
+
+# Package names in the given fields of $1, one per line, alternatives
+# flattened, versions and arch qualifiers dropped.
+fields () {
+    dpkg-query -W -f="$2\n" "$1" \
+        | sed 's/[|,]/\n/g' | sed 's/([^)]*)//; s/:[a-z0-9]*//; s/ //g' | grep -v '^$'
+}
+
+# dpkg-query format strings, not shell expansions:
+# shellcheck disable=SC2016
+depends () {
+    fields "$1" '${Pre-Depends}, ${Depends}'
+}
+
+# Whether package $2 is $1 or a declared dependency of $1, directly or
+# through something $2 Provides.
+reachable () {
+    [ "$1" = "$2" ] && return 0
+    # shellcheck disable=SC2016
+    { echo "$2"; fields "$2" '${Provides}'; } > "$WORKDIR/names"
+    depends "$1" | grep -qxF -f "$WORKDIR/names"
+}
+
+for dev in $DEV_PKGS; do
+    for pc in $(dpkg -L "$dev" | grep '/pkgconfig/.*\.pc$'); do
+        libdir=${pc%/pkgconfig/*}
+        for l in $(sed -n 's/^Libs:[[:space:]]*//p' "$pc" | tr ' ' '\n' | sed -n 's/^-l\(gst.*\)/\1/p'); do
+            o=$(owner "$libdir/lib$l.so")
+            [ "$o" = "$dev" ] || fail "$pc links -l$l, but lib$l.so is in '${o:-nothing}', not $dev"
+        done
+        if [ "$dev" = libgstreamer-plugins-extra1.0-dev ]; then
+            for m in $(sed -n 's/^Requires\(\.private\)\{0,1\}:[[:space:]]*//p' "$pc" \
+                    | tr ',' '\n' | sed 's/[<>=].*//; s/ //g' | grep -v '^$'); do
+                f=$(dpkg-query -S "*/pkgconfig/$m.pc" 2>/dev/null | sed -n 's/^[^ ]* //p' | head -n1)
+                o=$(owner "${f:-/nonexistent}")
+                if [ -z "$o" ] || ! reachable "$dev" "$o"; then
+                    fail "$pc requires $m, provided by '${o:-nothing}', not a dependency of $dev"
+                fi
+            done
+        fi
+    done
+
+    for so in $(dpkg -L "$dev" | grep '/lib[^/]*\.so$'); do
+        target=$(readlink -f "$so")
+        o=$(owner "$target")
+        [ -e "$target" ] || fail "$so is dangling"
+        if [ -z "$o" ] || ! reachable "$dev" "$o"; then
+            fail "$so resolves to '${o:-nothing}', not a dependency of $dev"
+        fi
+    done
+
+    for gir in $(dpkg -L "$dev" | grep '/gir-1\.0/[^/]*\.gir$'); do
+        name=$(basename "$gir" .gir)
+        typelib=$(dpkg-query -S "*/girepository-1.0/$name.typelib" 2>/dev/null | sed -n 's/^[^ ]* //p' | head -n1)
+        t=$(owner "${typelib:-/nonexistent}")
+        if [ -z "$t" ]; then
+            fail "$gir has no $name.typelib"
+            continue
+        fi
+        reachable "$dev" "$t" || fail "$name.typelib is in $t, not a dependency of $dev"
+        sed -n 's/.*<include name="\([^"]*\)" version="\([^"]*\)".*/\1-\2/p' "$gir" > "$WORKDIR/includes"
+        while read -r inc; do
+            f=$(dpkg-query -S "*/gir-1.0/$inc.gir" 2>/dev/null | sed -n 's/^[^ ]* //p' | head -n1)
+            o=$(owner "${f:-/nonexistent}")
+            if [ -z "$o" ] || ! reachable "$dev" "$o"; then
+                fail "$gir includes $inc, provided by '${o:-nothing}', not a dependency of $dev"
+            fi
+        done < "$WORKDIR/includes"
+        libdir=${typelib%/girepository-1.0/*}
+        for lib in $(sed -n 's/.*shared-library="\([^"]*\)".*/\1/p' "$gir" | tr ',' ' '); do
+            o=$(owner "$libdir/$lib")
+            if [ -z "$o" ] || ! reachable "$t" "$o"; then
+                fail "$name.typelib loads $lib, in '${o:-nothing}', not a dependency of $t"
+            fi
+        done
+    done
+done
+
+for pkg in $ELF_PKGS; do
+    for f in $(dpkg -L "$pkg" | grep '\.so[.0-9]*$'); do
+        [ -f "$f" ] && [ ! -L "$f" ] || continue
+        for needed in $("$READELF" -d "$f" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p'); do
+            path=$(dpkg-query -S "*/$needed" 2>/dev/null | sed -n 's/^[^ ]* //p' | head -n1)
+            o=$(owner "${path:-/nonexistent}")
+            if [ -z "$o" ]; then
+                fail "$f needs $needed, which no package ships"
+                continue
+            fi
+            reachable "$pkg" "$o" || fail "$f needs $needed from $o, not a dependency of $pkg"
+            case " $EXTRA_PKGS " in
+            *" $pkg "*)
+                if echo "$o" | grep -Eq "$BAD_RE"; then
+                    fail "$f in $pkg links against $o"
+                fi
+                ;;
+            esac
+        done
+    done
+done
+
+for pkg in $EXTRA_PKGS; do
+    for d in $(depends "$pkg"); do
+        if echo "$d" | grep -Eq "$BAD_RE"; then
+            fail "$pkg depends on $d"
+        fi
+    done
+done
+
+if [ "$failures" -ne 0 ]; then
+    echo "$failures failure(s)"
+    exit 1
+fi
+echo "OK"

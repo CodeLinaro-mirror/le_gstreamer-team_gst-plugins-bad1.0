@@ -1,0 +1,70 @@
+#!/bin/sh
+# Load every plugin in gstreamer1.0-plugins-extra with -bad absent, so a
+# plugin left needing a -bad library fails to load here.
+
+set -eux
+
+WORKDIR=$(mktemp -d)
+export XDG_RUNTIME_DIR="$WORKDIR"
+export GST_REGISTRY="$WORKDIR/registry.bin"
+cleanup () {
+    rm -fr "${WORKDIR:?}"
+}
+trap cleanup 0 INT QUIT ABRT PIPE TERM
+cd "$WORKDIR"
+
+if [ -n "${DEB_HOST_GNU_TYPE:-}" ]; then
+    CROSS_COMPILE="$DEB_HOST_GNU_TYPE-"
+else
+    CROSS_COMPILE=
+fi
+
+for p in gstreamer1.0-plugins-bad libgstreamer-plugins-bad1.0-0; do
+    if dpkg-query -W -f='${db:Status-Status}\n' "$p" 2>/dev/null | grep -qx installed; then
+        echo "$p is installed, the test proves nothing"
+        exit 1
+    fi
+done
+
+cat > load.c <<'EOF'
+#include <gst/gst.h>
+
+/* argv: plugin files to load, then -- and element names to create. */
+int main (int argc, char **argv)
+{
+    int i = 1;
+
+    gst_init (NULL, NULL);
+    for (; i < argc && g_strcmp0 (argv[i], "--") != 0; i++) {
+        GError *err = NULL;
+        GstPlugin *plugin = gst_plugin_load_file (argv[i], &err);
+
+        if (plugin == NULL)
+            g_error ("%s: %s", argv[i], err->message);
+        g_print ("loaded %s from %s\n", gst_plugin_get_name (plugin), argv[i]);
+        gst_object_unref (plugin);
+    }
+    for (i++; i < argc; i++) {
+        GstElement *e = gst_element_factory_make (argv[i], NULL);
+
+        if (e == NULL)
+            g_error ("cannot create element %s", argv[i]);
+        g_print ("created %s\n", argv[i]);
+        gst_object_unref (e);
+    }
+    return 0;
+}
+EOF
+
+# Deliberately word-splitting, that's how pkg-config works:
+# shellcheck disable=SC2046
+"${CROSS_COMPILE}gcc" -Wall -Werror -o load load.c $("${CROSS_COMPILE}pkgconf" --cflags --libs gstreamer-1.0)
+
+plugins=$(dpkg -L gstreamer1.0-plugins-extra | grep '/gstreamer-1\.0/libgst.*\.so$')
+[ -n "$plugins" ]
+
+# va registers elements per VA device, so a testbed without one has none.
+# camerabin needs no hardware to instantiate.
+# shellcheck disable=SC2086
+./load $plugins -- camerabin wrappercamerabinsrc viewfinderbin
+echo "OK"
