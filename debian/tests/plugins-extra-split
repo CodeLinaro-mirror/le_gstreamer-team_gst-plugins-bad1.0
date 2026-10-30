@@ -5,7 +5,8 @@
 #  - a -dev symlink resolves to a library the -dev package depends on
 #  - a .gir has its typelib, its includes and its shared-library reachable
 #    through declared dependencies, not transitively
-#  - the extra .pc files' Requires are satisfied by declared dependencies
+#  - .pc Requires are installed by the -dev package's dependencies,
+#    declared directly for the extra -dev
 #  - every NEEDED library is owned by a package the binary depends on
 #  - nothing in -extra depends on, or links against, -bad
 
@@ -69,16 +70,16 @@ for dev in $DEV_PKGS; do
             o=$(owner "$libdir/lib$l.so")
             [ "$o" = "$dev" ] || fail "$pc links -l$l, but lib$l.so is in '${o:-nothing}', not $dev"
         done
-        if [ "$dev" = libgstreamer-plugins-extra1.0-dev ]; then
-            for m in $(sed -n 's/^Requires\(\.private\)\{0,1\}:[[:space:]]*//p' "$pc" \
-                    | tr ',' '\n' | sed 's/[<>=].*//; s/ //g' | grep -v '^$'); do
-                f=$(dpkg-query -S "*/pkgconfig/$m.pc" 2>/dev/null | sed -n 's/^[^ ]* //p' | head -n1)
-                o=$(owner "${f:-/nonexistent}")
-                if [ -z "$o" ] || ! reachable "$dev" "$o"; then
-                    fail "$pc requires $m, provided by '${o:-nothing}', not a dependency of $dev"
-                fi
-            done
-        fi
+        for m in $(sed -n 's/^Requires\(\.private\)\{0,1\}:[[:space:]]*//p' "$pc" \
+                | tr ',' '\n' | sed 's/[<>=].*//; s/ //g' | grep -v '^$'); do
+            f=$(dpkg-query -S "*/pkgconfig/$m.pc" 2>/dev/null | sed -n 's/^[^ ]* //p' | head -n1)
+            o=$(owner "${f:-/nonexistent}")
+            if [ -z "$o" ]; then
+                fail "$pc requires $m, which nothing installed by $dev provides"
+            elif [ "$dev" = libgstreamer-plugins-extra1.0-dev ] && ! reachable "$dev" "$o"; then
+                fail "$pc requires $m, provided by $o, not a dependency of $dev"
+            fi
+        done
     done
 
     for so in $(dpkg -L "$dev" | grep '/lib[^/]*\.so$'); do
