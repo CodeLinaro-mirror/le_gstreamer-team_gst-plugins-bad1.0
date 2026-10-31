@@ -30,10 +30,14 @@ Depends: build-essential,
          libgstreamer-plugins-extra1.0-dev,
 Restrictions: allow-stderr
 
+# libgstreamer-plugins-extra1.0-dev, not libgstreamer1.0-dev and pkgconf:
+# cross testing qualifies only this source's binaries with the host arch,
+# so on i386 those two arrived as amd64 and i686-linux-gnu-pkgconf was
+# missing. Ours pulls both in for the host arch, and still no -bad.
 Tests: gstreamer1.0-plugins-extra
 Depends: build-essential,
          gstreamer1.0-plugins-extra,
-         libgstreamer1.0-dev,
+         libgstreamer-plugins-extra1.0-dev,
 Restrictions: allow-stderr
 
 # Not i386. amd64 python3-gi cannot load i386 typelibs.
