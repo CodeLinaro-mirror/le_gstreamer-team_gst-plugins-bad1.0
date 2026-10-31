@@ -36,9 +36,20 @@ fail () {
     failures=$((failures + 1))
 }
 
+# dpkg-query -S without "diversion by" lines: armhf libc6 diverts
+# /lib/ld-linux-armhf.so.3, and that line is not "package: path".
+search () {
+    dpkg-query -S "$1" 2>/dev/null | grep -v '^diversion by '
+}
+
 # Owning package of a path, without the :arch qualifier.
 owner () {
-    dpkg-query -S "$1" 2>/dev/null | sed -n '1s/[:,].*//p'
+    search "$1" | sed -n '1s/[:,].*//p'
+}
+
+# First installed path matching a dpkg-query -S pattern.
+find_path () {
+    search "$1" | sed -n '1s/^[^ ]* //p'
 }
 
 # Package names in the given fields of $1, one per line, alternatives
@@ -72,7 +83,7 @@ for dev in $DEV_PKGS; do
         done
         for m in $(sed -n 's/^Requires\(\.private\)\{0,1\}:[[:space:]]*//p' "$pc" \
                 | tr ',' '\n' | sed 's/[<>=].*//; s/ //g' | grep -v '^$'); do
-            f=$(dpkg-query -S "*/pkgconfig/$m.pc" 2>/dev/null | sed -n 's/^[^ ]* //p' | head -n1)
+            f=$(find_path "*/pkgconfig/$m.pc")
             o=$(owner "${f:-/nonexistent}")
             if [ -z "$o" ]; then
                 fail "$pc requires $m, which nothing installed by $dev provides"
@@ -93,7 +104,7 @@ for dev in $DEV_PKGS; do
 
     for gir in $(dpkg -L "$dev" | grep '/gir-1\.0/[^/]*\.gir$'); do
         name=$(basename "$gir" .gir)
-        typelib=$(dpkg-query -S "*/girepository-1.0/$name.typelib" 2>/dev/null | sed -n 's/^[^ ]* //p' | head -n1)
+        typelib=$(find_path "*/girepository-1.0/$name.typelib")
         t=$(owner "${typelib:-/nonexistent}")
         if [ -z "$t" ]; then
             fail "$gir has no $name.typelib"
@@ -102,7 +113,7 @@ for dev in $DEV_PKGS; do
         reachable "$dev" "$t" || fail "$name.typelib is in $t, not a dependency of $dev"
         sed -n 's/.*<include name="\([^"]*\)" version="\([^"]*\)".*/\1-\2/p' "$gir" > "$WORKDIR/includes"
         while read -r inc; do
-            f=$(dpkg-query -S "*/gir-1.0/$inc.gir" 2>/dev/null | sed -n 's/^[^ ]* //p' | head -n1)
+            f=$(find_path "*/gir-1.0/$inc.gir")
             o=$(owner "${f:-/nonexistent}")
             if [ -z "$o" ] || ! reachable "$dev" "$o"; then
                 fail "$gir includes $inc, provided by '${o:-nothing}', not a dependency of $dev"
@@ -122,7 +133,7 @@ for pkg in $ELF_PKGS; do
     for f in $(dpkg -L "$pkg" | grep '\.so[.0-9]*$'); do
         [ -f "$f" ] && [ ! -L "$f" ] || continue
         for needed in $("$READELF" -d "$f" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p'); do
-            path=$(dpkg-query -S "*/$needed" 2>/dev/null | sed -n 's/^[^ ]* //p' | head -n1)
+            path=$(find_path "*/$needed")
             o=$(owner "${path:-/nonexistent}")
             if [ -z "$o" ]; then
                 fail "$f needs $needed, which no package ships"
