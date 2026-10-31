@@ -374,8 +374,8 @@ Depends: libdrm-dev,
          libva-dev,
          ${gir:Depends},
          ${misc:Depends}
-Breaks: libgstreamer-plugins-bad1.0-dev (<< 1.28.8-1ubuntu1), libgstreamer-plugins-good1.0-dev (<< 1.28.0-1ubuntu3)
-Replaces: libgstreamer-plugins-bad1.0-dev (<< 1.28.8-1ubuntu1), libgstreamer-plugins-good1.0-dev (<< 1.28.0-1ubuntu3)
+Breaks: libgstreamer-plugins-bad1.0-dev (<< 1.28.8-1ubuntu1~), libgstreamer-plugins-good1.0-dev (<< 1.28.0-1ubuntu3)
+Replaces: libgstreamer-plugins-bad1.0-dev (<< 1.28.8-1ubuntu1~), libgstreamer-plugins-good1.0-dev (<< 1.28.0-1ubuntu3)
 Provides: ${gir:Provides}
 Description: GStreamer development files for libraries from the "extra" set
  GStreamer is a streaming media framework, based on graphs of filters
