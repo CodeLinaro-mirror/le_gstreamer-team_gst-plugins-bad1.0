@@ -1033,6 +1033,74 @@ GST_START_TEST (test_parse_skip_to_4bytes_sc)
 
 GST_END_TEST;
 
+GST_START_TEST (test_parse_reject_forbidden_nal_header)
+{
+  GstHarness *h = gst_harness_new ("h265parse");
+  guint8 bad_sps[sizeof (h265_sps)];
+  GstBuffer *buf;
+  GstMapInfo map;
+  guint count = 0;
+  gboolean seen_idr = FALSE;
+
+  memcpy (bad_sps, h265_sps, sizeof (bad_sps));
+  bad_sps[4] |= 0x80;
+
+  gst_harness_set_caps_str (h,
+      "video/x-h265,stream-format=byte-stream,alignment=nal",
+      "video/x-h265,stream-format=byte-stream,alignment=nal");
+  buf = composite_buffer (100, 0, 5, h265_vps, sizeof (h265_vps),
+      h265_sps, sizeof (h265_sps), h265_pps, sizeof (h265_pps),
+      bad_sps, sizeof (bad_sps), h265_idr, sizeof (h265_idr));
+  fail_unless_equals_int (gst_harness_push (h, buf), GST_FLOW_OK);
+  gst_harness_push_event (h, gst_event_new_eos ());
+
+  while (gst_harness_buffers_in_queue (h)) {
+    buf = gst_harness_pull (h);
+    fail_unless (gst_buffer_map (buf, &map, GST_MAP_READ));
+    fail_unless (map.size >= 6);
+    fail_unless_equals_int (map.data[4] & 0x80, 0);
+    if (map.data[4] == h265_idr[4] && map.data[5] == h265_idr[5])
+      seen_idr = TRUE;
+    gst_buffer_unmap (buf, &map);
+    gst_buffer_unref (buf);
+    count++;
+  }
+  fail_unless (count >= 3);
+  fail_unless (seen_idr);
+
+  gst_harness_teardown (h);
+}
+
+GST_END_TEST;
+
+GST_START_TEST (test_parse_preserve_au_before_forbidden_nal)
+{
+  GstHarness *h = gst_harness_new ("h265parse");
+  guint8 bad_sps[sizeof (h265_sps)];
+  GstBuffer *buf;
+
+  memcpy (bad_sps, h265_sps, sizeof (bad_sps));
+  bad_sps[4] |= 0x80;
+
+  gst_harness_set_caps_str (h,
+      "video/x-h265,stream-format=byte-stream,alignment=au",
+      "video/x-h265,stream-format=byte-stream,alignment=au");
+  buf = composite_buffer (100, 0, 5, h265_vps, sizeof (h265_vps),
+      h265_sps, sizeof (h265_sps), h265_pps, sizeof (h265_pps),
+      h265_idr, sizeof (h265_idr), bad_sps, sizeof (bad_sps));
+  fail_unless_equals_int (gst_harness_push (h, buf), GST_FLOW_OK);
+  fail_unless (gst_harness_push_event (h, gst_event_new_eos ()));
+
+  fail_unless (gst_harness_buffers_in_queue (h) >= 1);
+  pull_and_check_composite (h, 100, 0, 5, h265_aud, sizeof (h265_aud),
+      h265_vps, sizeof (h265_vps), h265_sps, sizeof (h265_sps),
+      h265_pps, sizeof (h265_pps), h265_idr, sizeof (h265_idr));
+
+  gst_harness_teardown (h);
+}
+
+GST_END_TEST;
+
 GST_START_TEST (test_parse_sc_with_half_header)
 {
   GstHarness *h;
@@ -1315,6 +1383,59 @@ GST_START_TEST (test_parse_fallback_profile)
 
 GST_END_TEST;
 
+GST_START_TEST (test_parse_vui_invalid_framerate)
+{
+  GstHarness *h;
+  GstBuffer *buf;
+  GstEvent *event;
+  gboolean seen = FALSE;
+  /* SPS with VUI timing time_scale = 0x80000000 and
+   * num_units_in_tick = 0xFFFFFFFF plus a picture timing SEI marking field
+   * pictures. The timing values do not fit the gint framerate and used to
+   * trigger undefined behaviour (G_MININT % -1 inside
+   * gst_util_greatest_common_divisor) in the field-rate calculation. */
+  const guint8 bytestream[] = {
+    0x00, 0x00, 0x01, 0x42, 0x01, 0x01, 0x01, 0x80, 0x00, 0x03, 0x74, 0x61,
+    0x72, 0x67, 0x65, 0x74, 0x2f, 0x1e, 0xa0, 0x81, 0x05, 0xff, 0xf0, 0x88,
+    0x17, 0xff, 0xff, 0xff, 0xfe, 0x00, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00,
+    0x01, 0x4e, 0x01, 0x01, 0x01, 0x10,
+  };
+
+  h = gst_harness_new_parse ("h265parse");
+  gst_harness_set_src_caps_str (h, "video/x-h265");
+
+  buf = gst_buffer_new_and_alloc (sizeof (bytestream));
+  gst_buffer_fill (buf, 0, bytestream, sizeof (bytestream));
+  fail_unless_equals_int (gst_harness_push (h, buf), GST_FLOW_OK);
+
+  gst_harness_push_event (h, gst_event_new_eos ());
+
+  while ((event = gst_harness_pull_event (h)) != NULL) {
+    GstCaps *caps;
+    const GstStructure *s;
+    gint n = 0, d = 1;
+
+    if (GST_EVENT_TYPE (event) != GST_EVENT_CAPS) {
+      gst_event_unref (event);
+      continue;
+    }
+
+    seen = TRUE;
+    gst_event_parse_caps (event, &caps);
+    s = gst_caps_get_structure (caps, 0);
+    if (gst_structure_get_fraction (s, "framerate", &n, &d))
+      fail_unless (n >= 0 && d > 0);
+
+    gst_event_unref (event);
+    break;
+  }
+  fail_unless (seen);
+
+  gst_harness_teardown (h);
+}
+
+GST_END_TEST;
+
 GST_START_TEST (test_packetized_hvcc_drop_corrupt)
 {
   GstBuffer *cdata;
@@ -1418,6 +1539,181 @@ GST_START_TEST (test_packetized_hvcc_drop_corrupt)
 
 GST_END_TEST;
 
+GST_START_TEST (test_parse_scc_palette_empty_range)
+{
+  GstHarness *h;
+  GstBuffer *buf;
+  GstCaps *caps;
+  /* SPS with an SCC extension enabling the palette mode with
+   * palette_max_size = delta_palette_max_predictor_size = 0 while
+   * predictor initializers are present. The bound for
+   * sps_num_palette_predictor_initializer_minus1 then underflows, which
+   * used to accept any value and write past the initializer arrays.
+   * The SPS must be rejected. */
+  const guint8 bytestream[] = {
+    0x00, 0x00, 0x01, 0x42, 0x01, 0x01, 0x01, 0x80, 0x00, 0x03, 0x00, 0x80,
+    0x00, 0x03, 0x00, 0x03, 0x00, 0x1e, 0x08, 0x20, 0x20, 0x81, 0x05, 0xff,
+    0xf0, 0x84, 0x41, 0xe0, 0x10, 0x0f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7b, 0x00,
+    0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xf1, 0x85, 0xb9, 0xd2,
+    0xb7, 0x7b, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xf1, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xf1, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xf1, 0xf1,
+  };
+
+  h = gst_harness_new_parse ("h265parse");
+  gst_harness_set_src_caps_str (h, "video/x-h265");
+
+  buf = gst_buffer_new_and_alloc (sizeof (bytestream));
+  gst_buffer_fill (buf, 0, bytestream, sizeof (bytestream));
+  fail_unless_equals_int (gst_harness_push (h, buf), GST_FLOW_OK);
+
+  gst_harness_push_event (h, gst_event_new_eos ());
+
+  /* The SPS is rejected, so the element must not have pushed caps
+   * describing it. */
+  caps = gst_pad_get_current_caps (h->srcpad);
+  if (caps != NULL) {
+    const GstStructure *s = gst_caps_get_structure (caps, 0);
+    fail_unless (!gst_structure_has_field (s, "width"),
+        "SPS with empty palette predictor range must be rejected");
+    gst_caps_unref (caps);
+  }
+
+  gst_harness_teardown (h);
+}
+
+GST_END_TEST;
+
+/* Picture with a timecode SEI while the VUI timing signals
+ * time_scale = 0. Scaling the timecode frame count divides by
+ * fps_d * time_scale, which trips a critical inside
+ * gst_util_uint64_scale(). The timecode is only processed when the
+ * stream arrives in several buffers, so push the stream chunked the
+ * same way the fuzzer harness splits it. */
+GST_START_TEST (test_timecode_zero_time_scale)
+{
+  GstHarness *h;
+  GstBuffer *buf;
+  const guint8 bytestream[] = {
+    0x65, 0x72, 0x61, 0x6d, 0x68, 0x18, 0x00, 0x00, 0x00, 0x72, 0x00, 0xfe,
+    0xff, 0xff, 0xff, 0x28, 0xfe, 0x07, 0xd0, 0x00, 0x00, 0x01, 0x4e, 0x85,
+    0x88, 0x04, 0xff, 0xff, 0xff, 0x00, 0x67, 0x61, 0x01, 0x00, 0x00, 0x00,
+    0x67, 0x65, 0x74, 0x00, 0x00, 0x7f, 0xb1, 0xee, 0x00, 0x00, 0x01, 0x42,
+    0x01, 0x01, 0x80, 0x00, 0x03, 0x00, 0x80, 0x00, 0x8d, 0x00, 0x00, 0x74,
+    0x01, 0x5c, 0x72, 0x81, 0x05, 0xff, 0xf0, 0x88, 0x2f, 0x74, 0x61, 0x72,
+    0x67, 0x65, 0x74, 0x2f, 0x00, 0x40, 0x00, 0x00, 0x01, 0x00, 0x72, 0x2f,
+    0x00, 0x00, 0x01, 0x5c, 0x72,
+  };
+
+  h = gst_harness_new_parse ("h265parse");
+  gst_harness_set_src_caps_str (h, "video/x-h265");
+
+  {
+    const guint chunk_count = bytestream[0] % 4 + 1;
+    gsize remaining = sizeof (bytestream);
+    gsize offset = 0;
+    guint i;
+
+    for (i = 0; i < chunk_count; i++) {
+      gsize chunk_size =
+          (i == chunk_count - 1) ? remaining : remaining / (chunk_count - i);
+
+      buf = gst_buffer_new_and_alloc (chunk_size);
+      gst_buffer_fill (buf, 0, bytestream + offset, chunk_size);
+      fail_unless_equals_int (gst_harness_push (h, buf), GST_FLOW_OK);
+      offset += chunk_size;
+      remaining -= chunk_size;
+    }
+  }
+
+  fail_unless (gst_harness_push_event (h, gst_event_new_eos ()));
+
+  gst_harness_teardown (h);
+}
+
+GST_END_TEST;
+
+GST_START_TEST (test_non_vcl_nal_duration)
+{
+  /* Verify that non-VCL NALs (VPS, SPS, PPS) get duration=0 while
+   * VCL NALs (slices) get the proper fps-based duration.
+   * Regression test for: "h265parse: only extrapolate duration for vcl nal"
+   *
+   * Push non-VCL NALs with an arbitrary non-zero PTS to make it clear
+   * that the resulting duration=0 is a deliberate parser decision, not
+   * an artifact of the input timestamps.
+   */
+
+  GstCaps *in_caps, *out_caps;
+  GstBuffer *buf_in, *buf_out;
+  GstClockTime expected_duration;
+  GstHarness *h = gst_harness_new ("h265parse");
+  const GstClockTime fake_dts = 12345 * GST_MSECOND;
+
+  const gchar *in_caps_str = "video/x-h265, alignment=(string)nal";
+  const gchar *out_caps_str = "video/x-h265, alignment=(string)nal";
+
+  in_caps = gst_caps_from_string (in_caps_str);
+  out_caps = gst_caps_from_string (out_caps_str);
+  gst_harness_set_caps (h, in_caps, out_caps);
+
+  /* Push VPS, SPS, PPS with an arbitrary non-zero PTS */
+  buf_in = wrap_buffer (h265_128x128_vps, sizeof (h265_128x128_vps), 0, 0);
+  GST_BUFFER_DURATION (buf_in) = fake_dts;
+  fail_unless_equals_int (gst_harness_push (h, buf_in), GST_FLOW_OK);
+
+  buf_in = wrap_buffer (h265_128x128_sps, sizeof (h265_128x128_sps), 0, 0);
+  GST_BUFFER_DURATION (buf_in) = fake_dts;
+  fail_unless_equals_int (gst_harness_push (h, buf_in), GST_FLOW_OK);
+
+  buf_in = wrap_buffer (h265_128x128_pps, sizeof (h265_128x128_pps), 0, 0);
+  GST_BUFFER_DURATION (buf_in) = fake_dts;
+  fail_unless_equals_int (gst_harness_push (h, buf_in), GST_FLOW_OK);
+
+  /* Push an IDR slice (VCL) to complete the AU */
+  buf_in = wrap_buffer (h265_128x128_slice_idr_n_lp,
+      sizeof (h265_128x128_slice_idr_n_lp), 0, 0);
+  fail_unless_equals_int (gst_harness_push (h, buf_in), GST_FLOW_OK);
+
+  /* With framerate=30/1, a VCL frame should get duration = 1/30 s */
+  expected_duration = gst_util_uint64_scale (GST_SECOND, 1, 30);
+
+  /* First AU produces: VPS + SPS + PPS + slice = 4 buffers */
+  fail_unless_equals_int (gst_harness_buffers_in_queue (h), 4);
+
+  /* VPS - non-VCL, must have duration=0 */
+  buf_out = gst_harness_pull (h);
+  fail_unless_equals_clocktime (GST_BUFFER_DURATION (buf_out), 0);
+  gst_buffer_unref (buf_out);
+
+  /* SPS - non-VCL, must have duration=0 */
+  buf_out = gst_harness_pull (h);
+  fail_unless_equals_clocktime (GST_BUFFER_DURATION (buf_out), 0);
+  gst_buffer_unref (buf_out);
+
+  /* PPS - non-VCL, must have duration=0 */
+  buf_out = gst_harness_pull (h);
+  fail_unless_equals_clocktime (GST_BUFFER_DURATION (buf_out), 0);
+  gst_buffer_unref (buf_out);
+
+  /* IDR slice - VCL, must have the fps-based duration */
+  buf_out = gst_harness_pull (h);
+  fail_unless_equals_clocktime (GST_BUFFER_DURATION (buf_out),
+      expected_duration);
+  gst_buffer_unref (buf_out);
+
+  gst_harness_teardown (h);
+}
+
+GST_END_TEST;
+
 static Suite *
 h265parse_harnessed_suite (void)
 {
@@ -1449,6 +1745,8 @@ h265parse_harnessed_suite (void)
   tcase_add_test (tc_chain, test_sliced_au_au);
 
   tcase_add_test (tc_chain, test_parse_skip_to_4bytes_sc);
+  tcase_add_test (tc_chain, test_parse_reject_forbidden_nal_header);
+  tcase_add_test (tc_chain, test_parse_preserve_au_before_forbidden_nal);
   tcase_add_test (tc_chain, test_parse_sc_with_half_header);
 
   tcase_add_test (tc_chain, test_drain);
@@ -1457,7 +1755,13 @@ h265parse_harnessed_suite (void)
   tcase_add_test (tc_chain, test_invalid_sei_in_hvcc);
 
   tcase_add_test (tc_chain, test_parse_fallback_profile);
+  tcase_add_test (tc_chain, test_parse_vui_invalid_framerate);
   tcase_add_test (tc_chain, test_packetized_hvcc_drop_corrupt);
+  tcase_add_test (tc_chain, test_non_vcl_nal_duration);
+
+  tcase_add_test (tc_chain, test_parse_scc_palette_empty_range);
+
+  tcase_add_test (tc_chain, test_timecode_zero_time_scale);
   return s;
 }
 

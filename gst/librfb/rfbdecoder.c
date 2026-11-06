@@ -20,6 +20,16 @@
 GST_DEBUG_CATEGORY_EXTERN (rfbdecoder_debug);
 #define GST_CAT_DEFAULT rfbdecoder_debug
 
+/* Upper bounds for server declared string lengths, so that a malicious
+ * server cannot make us allocate huge buffers */
+
+/* Upper bound for the framebuffer dimensions, so that a malicious server
+ * cannot make us allocate huge buffers */
+#define RFB_MAX_FRAMEBUFFER_DIMENSION 8192
+#define RFB_MAX_NAME_LENGTH         (4 * 1024)
+#define RFB_MAX_REASON_LENGTH       (1024 * 1024)
+#define RFB_MAX_CUT_TEXT_LENGTH     (1024 * 1024)
+
 
 static gboolean rfb_decoder_state_wait_for_protocol_version (RfbDecoder *
     decoder);
@@ -150,6 +160,11 @@ rfb_decoder_disconnect (RfbDecoder * decoder)
   g_clear_object (&decoder->connection);
   g_clear_error (&decoder->error);
   g_clear_pointer (&decoder->data, g_free);
+  g_clear_pointer (&decoder->name, g_free);
+  decoder->data_len = 0;
+
+  /* Start over from the protocol handshake on the next connection */
+  decoder->state = NULL;
 
   g_mutex_unlock (&decoder->write_lock);
 }
@@ -297,10 +312,11 @@ rfb_decoder_send_update_request (RfbDecoder * decoder,
 
   rfb_decoder_send (decoder, data, 10);
 
-  /* create a backup of the prev frame for copyrect encoding */
-  if (decoder->use_copyrect) {
+  /* create a backup of the prev frame for copyrect encoding, but the buffer
+   * is only allocated if copyrect was enabled before negotiation */
+  if (decoder->use_copyrect && decoder->prev_frame) {
     memcpy (decoder->prev_frame, decoder->frame,
-        decoder->rect_width * decoder->rect_height * decoder->bpp / 8);
+        decoder->rect_height * decoder->line_size);
   }
 
   decoder->state = rfb_decoder_state_normal;
@@ -397,22 +413,32 @@ rfb_decoder_state_wait_for_protocol_version (RfbDecoder * decoder)
 static gboolean
 rfb_decoder_state_reason (RfbDecoder * decoder)
 {
-  gint reason_length;
+  guint32 reason_length;
+  gchar *reason;
 
   if (!rfb_decoder_read (decoder, 4))
     return FALSE;
 
   reason_length = RFB_GET_UINT32 (decoder->data);
+  if (reason_length > RFB_MAX_REASON_LENGTH) {
+    GST_WARNING ("Invalid reason length %u", reason_length);
+    return FALSE;
+  }
 
-  if (!rfb_decoder_read (decoder, reason_length))
+  if (reason_length > 0 && !rfb_decoder_read (decoder, reason_length))
     return FALSE;
 
-  GST_WARNING ("Reason by server: %s", decoder->data);
+  /* The reason string is not NUL-terminated on the wire */
+  reason = reason_length > 0 ? g_strndup ((const gchar *) decoder->data,
+      reason_length) : g_strdup ("");
+
+  GST_WARNING ("Reason by server: %s", reason);
 
   if (decoder->error == NULL) {
     decoder->error = g_error_new (GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_READ,
-        "VNC server error: %s", decoder->data);
+        "VNC server error: %s", reason);
   }
+  g_free (reason);
 
   return FALSE;
 }
@@ -680,6 +706,59 @@ rfb_decoder_state_wait_for_server_initialisation (RfbDecoder * decoder)
   decoder->green_shift = RFB_GET_UINT8 (decoder->data + 15);
   decoder->blue_shift = RFB_GET_UINT8 (decoder->data + 16);
 
+  if (decoder->width == 0 || decoder->height == 0 ||
+      decoder->width > RFB_MAX_FRAMEBUFFER_DIMENSION ||
+      decoder->height > RFB_MAX_FRAMEBUFFER_DIMENSION) {
+    GST_WARNING ("Invalid framebuffer dimensions %ux%u", decoder->width,
+        decoder->height);
+    if (decoder->error == NULL) {
+      decoder->error = g_error_new (GST_RESOURCE_ERROR,
+          GST_RESOURCE_ERROR_READ,
+          "VNC server error: invalid framebuffer dimensions");
+    }
+    return FALSE;
+  }
+
+  if (decoder->bpp != 8 && decoder->bpp != 16 && decoder->bpp != 24 &&
+      decoder->bpp != 32) {
+    GST_WARNING ("Invalid bits per pixel %u from server", decoder->bpp);
+    if (decoder->error == NULL) {
+      decoder->error = g_error_new (GST_RESOURCE_ERROR,
+          GST_RESOURCE_ERROR_READ, "VNC server error: invalid bits per pixel");
+    }
+    return FALSE;
+  }
+
+  if (decoder->depth == 0 || decoder->depth > decoder->bpp) {
+    GST_WARNING ("Invalid colour depth %u for %u bits per pixel",
+        decoder->depth, decoder->bpp);
+    if (decoder->error == NULL) {
+      decoder->error = g_error_new (GST_RESOURCE_ERROR,
+          GST_RESOURCE_ERROR_READ, "VNC server error: invalid colour depth");
+    }
+    return FALSE;
+  }
+
+  if (!decoder->true_colour) {
+    GST_WARNING ("Pseudo-colour (colour map) framebuffers are not supported");
+    if (decoder->error == NULL) {
+      decoder->error = g_error_new (GST_RESOURCE_ERROR,
+          GST_RESOURCE_ERROR_READ,
+          "VNC server error: colour map not supported");
+    }
+    return FALSE;
+  }
+
+  if (decoder->red_shift >= 32 || decoder->green_shift >= 32 ||
+      decoder->blue_shift >= 32) {
+    GST_WARNING ("Invalid colour shifts from server");
+    if (decoder->error == NULL) {
+      decoder->error = g_error_new (GST_RESOURCE_ERROR,
+          GST_RESOURCE_ERROR_READ, "VNC server error: invalid colour shifts");
+    }
+    return FALSE;
+  }
+
   GST_DEBUG ("Server Initialization");
   GST_DEBUG ("width      = %d", decoder->width);
   GST_DEBUG ("height     = %d", decoder->height);
@@ -696,10 +775,18 @@ rfb_decoder_state_wait_for_server_initialisation (RfbDecoder * decoder)
 
   name_length = RFB_GET_UINT32 (decoder->data + 20);
 
-  if (!rfb_decoder_read (decoder, name_length))
+  if (name_length > RFB_MAX_NAME_LENGTH) {
+    GST_WARNING ("Invalid name length %u", name_length);
     return FALSE;
+  }
 
-  decoder->name = g_strndup ((gchar *) (decoder->data), name_length);
+  if (name_length > 0) {
+    if (!rfb_decoder_read (decoder, name_length))
+      return FALSE;
+    decoder->name = g_strndup ((gchar *) (decoder->data), name_length);
+  } else {
+    decoder->name = g_strdup ("");
+  }
   GST_DEBUG ("name       = %s", decoder->name);
 
   /* check if we need cropping */
@@ -775,7 +862,12 @@ rfb_decoder_state_normal (RfbDecoder * decoder)
       decoder->state = rfb_decoder_state_server_cut_text;
       break;
     default:
-      g_critical ("unknown message type %d", message_type);
+      GST_WARNING ("Unknown message type %d from server", message_type);
+      if (decoder->error == NULL) {
+        decoder->error = g_error_new (GST_RESOURCE_ERROR,
+            GST_RESOURCE_ERROR_READ, "VNC server error: unknown message type");
+      }
+      return FALSE;
   }
 
   return TRUE;
@@ -790,6 +882,12 @@ rfb_decoder_state_framebuffer_update (RfbDecoder * decoder)
 
   decoder->n_rects = RFB_GET_UINT16 (decoder->data + 1);
   GST_DEBUG ("Number of rectangles : %d", decoder->n_rects);
+
+  if (G_UNLIKELY (decoder->n_rects == 0)) {
+    /* The frame is already complete */
+    decoder->state = NULL;
+    return TRUE;
+  }
 
   decoder->state = rfb_decoder_state_framebuffer_update_rectangle;
 
@@ -820,11 +918,21 @@ rfb_decoder_state_framebuffer_update_rectangle (RfbDecoder * decoder)
   GST_DEBUG ("w:%d h:%d", w, h);
   GST_DEBUG ("encoding: %d", encoding);
 
+  if (G_UNLIKELY (w > (gint) decoder->width || h > (gint) decoder->height)) {
+    GST_WARNING ("Rectangle %dx%d bigger than the framebuffer %dx%d",
+        w, h, decoder->width, decoder->height);
+    return FALSE;
+  }
+
   switch (encoding) {
     case ENCODING_TYPE_RAW:
       ret = rfb_decoder_raw_encoding (decoder, x, y, w, h);
       break;
     case ENCODING_TYPE_COPYRECT:
+      if (G_UNLIKELY (!decoder->use_copyrect || decoder->prev_frame == NULL)) {
+        GST_WARNING ("Server sent CopyRect although it was not negotiated");
+        break;
+      }
       ret = rfb_decoder_copyrect_encoding (decoder, x, y, w, h);
       break;
     case ENCODING_TYPE_RRE:
@@ -888,9 +996,8 @@ rfb_decoder_raw_encoding (RfbDecoder * decoder, gint start_x, gint start_y,
           &skip_x, &skip_y))
     return TRUE;
 
-  frame =
-      decoder->frame + (((copy_y * decoder->rect_width) +
-          copy_x) * decoder->bytespp);
+  frame = decoder->frame + (copy_y * decoder->line_size) +
+      (copy_x * decoder->bytespp);
   p = decoder->data + (skip_y * raw_line_size) + (skip_x * decoder->bytespp);
   copy_line_size = copy_w * decoder->bytespp;
 
@@ -930,12 +1037,10 @@ rfb_decoder_copyrect_encoding (RfbDecoder * decoder, gint start_x, gint start_y,
 
   copyrect_width = copy_w * decoder->bytespp;
   line_width = decoder->line_size;
-  src =
-      decoder->prev_frame + ((src_y * decoder->rect_width) +
-      src_x) * decoder->bytespp;
-  dst =
-      decoder->frame + ((copy_y * decoder->rect_width) +
-      copy_x) * decoder->bytespp;
+  src = decoder->prev_frame + (src_y * decoder->line_size) +
+      (src_x * decoder->bytespp);
+  dst = decoder->frame + (copy_y * decoder->line_size) +
+      (copy_x * decoder->bytespp);
 
   while (copy_h--) {
     memcpy (dst, src, copyrect_width);
@@ -958,9 +1063,8 @@ rfb_decoder_fill_rectangle (RfbDecoder * decoder, gint x, gint y, gint w,
     return;
 
   for (i = 0; i < h; i++) {
-    guint8 *offset =
-        decoder->frame + ((x + (y +
-                i) * decoder->rect_width)) * decoder->bytespp;
+    guint8 *offset = decoder->frame + ((y + i) * decoder->line_size) +
+        (x * decoder->bytespp);
 
     for (j = 0; j < w; j++) {
       switch (decoder->bytespp) {
@@ -968,10 +1072,15 @@ rfb_decoder_fill_rectangle (RfbDecoder * decoder, gint x, gint y, gint w,
           *(guint8 *) offset = (guint8) color;
           break;
         case 2:
-          *(guint16 *) offset = (guint16) color;
+          GST_WRITE_UINT16_LE (offset, (guint16) color);
+          break;
+        case 3:
+          offset[0] = (guint8) (color >> 16);
+          offset[1] = (guint8) (color >> 8);
+          offset[2] = (guint8) color;
           break;
         case 4:
-          *(guint32 *) offset = color;
+          GST_WRITE_UINT32_LE (offset, color);
           break;
         default:
           /* reject unsupported format */
@@ -990,6 +1099,8 @@ rfb_decoder_get_pixel (RfbDecoder * decoder, const guint8 * data)
       return RFB_GET_UINT8 (data);
     case 2:
       return GUINT16_SWAP_LE_BE (RFB_GET_UINT16 (data));
+    case 3:
+      return ((guint32) data[0] << 16) | ((guint32) data[1] << 8) | data[2];
     case 4:
       return GUINT32_SWAP_LE_BE (RFB_GET_UINT32 (data));
     default:
@@ -1128,6 +1239,9 @@ rfb_decoder_hextile_encoding (RfbDecoder * decoder, gint start_x, gint start_y,
         continue;
       }
 
+      if (nr_subrect == 0)
+        continue;
+
       if (subencoding & SUBENCODING_SUBRECTSCOLORED) {
         guint offset = 0;
 
@@ -1234,19 +1348,29 @@ rfb_decoder_state_set_colour_map_entries (RfbDecoder * decoder)
 static gboolean
 rfb_decoder_state_server_cut_text (RfbDecoder * decoder)
 {
-  gint cut_text_length;
+  guint32 cut_text_length;
 
   /* 3 bytes padding, 4 bytes cut_text_length */
   if (!rfb_decoder_read (decoder, 7))
     return FALSE;
 
   cut_text_length = RFB_GET_UINT32 (decoder->data + 3);
-
-  if (!rfb_decoder_read (decoder, cut_text_length))
+  if (cut_text_length > RFB_MAX_CUT_TEXT_LENGTH) {
+    GST_WARNING ("Invalid cut text length %u", cut_text_length);
     return FALSE;
+  }
 
-  GST_DEBUG ("rfb_decoder_state_server_cut_text: throw away '%s'",
-      decoder->data);
+  if (cut_text_length > 0) {
+    gchar *text;
+
+    if (!rfb_decoder_read (decoder, cut_text_length))
+      return FALSE;
+
+    /* The text is not NUL-terminated on the wire */
+    text = g_strndup ((const gchar *) decoder->data, cut_text_length);
+    GST_DEBUG ("rfb_decoder_state_server_cut_text: throw away '%s'", text);
+    g_free (text);
+  }
 
   decoder->state = rfb_decoder_state_normal;
 

@@ -241,6 +241,9 @@ gst_h265_parse_nalu_header (GstH265NalUnit * nalu)
   if (nalu->size < 2)
     return FALSE;
 
+  if (data[0] & 0x80)
+    return FALSE;
+
   gst_bit_reader_init (&br, data, nalu->size - nalu->offset);
 
   /* skip the forbidden_zero_bit */
@@ -1791,8 +1794,8 @@ gst_h265_parser_identify_and_split_nalu_hevc (GstH265Parser * parser,
         nalu.data = (guint8 *) data;
         nalu.valid = TRUE;
 
-        gst_h265_parse_nalu_header (&nalu);
-        g_array_append_val (nalus, nalu);
+        if (gst_h265_parse_nalu_header (&nalu))
+          g_array_append_val (nalus, nalu);
       }
       break;
     } else if ((sc_offset == 2 && data[off + sc_offset - 1] != 0)
@@ -1811,8 +1814,8 @@ gst_h265_parser_identify_and_split_nalu_hevc (GstH265Parser * parser,
       nalu.data = (guint8 *) data;
       nalu.valid = TRUE;
 
-      gst_h265_parse_nalu_header (&nalu);
-      g_array_append_val (nalus, nalu);
+      if (gst_h265_parse_nalu_header (&nalu))
+        g_array_append_val (nalus, nalu);
     } else {
       /* CONDITION-C */
       /* startcode located at beginning of this chunk without actual nal data.
@@ -2018,7 +2021,7 @@ gst_h265_parse_vps (GstH265NalUnit * nalu, GstH265VPS * vps)
     for (i = 1; i < vps->num_hrd_parameters; i++) {
       guint16 hrd_layer_set_idx;
       guint8 cprms_present_flag;
-      GstH265HRDParams hrd_params;
+      GstH265HRDParams hrd_params = { 0 };
 
       READ_UE_MAX (&nr, hrd_layer_set_idx, 1023);
       CHECK_ALLOWED_MAX (hrd_layer_set_idx, vps->num_layer_sets_minus1);
@@ -2088,7 +2091,7 @@ GstH265ParserResult
 gst_h265_parser_parse_sps (GstH265Parser * parser, GstH265NalUnit * nalu,
     GstH265SPS * sps, gboolean parse_vui_params)
 {
-  GstH265SPSEXT sps_ext;
+  GstH265SPSEXT sps_ext = { 0 };
 
   return gst_h265_parser_parse_sps_ext (parser, nalu, sps, &sps_ext,
       parse_vui_params);
@@ -2288,6 +2291,16 @@ gst_h265_parse_sps_ext (GstH265Parser * parser, GstH265NalUnit * nalu,
           sps_scc_extension_params.sps_palette_predictor_initializers_present_flag)
       {
         guint comp;
+
+        /* The spec range for sps_num_palette_predictor_initializer_minus1
+         * is 0 to palette_max_size + delta_palette_max_predictor_size - 1.
+         * When that sum is 0 the range is empty, and the -1 would turn the
+         * bound negative, i.e. huge in the unsigned comparison, accepting
+         * any value and overflowing the initializer arrays. */
+        if (sps->sps_scc_extension_params.palette_max_size +
+            sps->sps_scc_extension_params.delta_palette_max_predictor_size == 0)
+          goto error;
+
         READ_UE_MAX (&nr,
             sps->
             sps_scc_extension_params.sps_num_palette_predictor_initializer_minus1,
@@ -2335,15 +2348,27 @@ done:
   if (sps->conformance_window_flag) {
     const guint crop_unit_x = subwc[sps->chroma_format_idc];
     const guint crop_unit_y = subhc[sps->chroma_format_idc];
+    guint64 crop_w, crop_h;
 
-    sps->crop_rect_width = sps->width -
-        (sps->conf_win_left_offset + sps->conf_win_right_offset) * crop_unit_x;
-    sps->crop_rect_height = sps->height -
-        (sps->conf_win_top_offset + sps->conf_win_bottom_offset) * crop_unit_y;
+    /* The conf_win offsets are unbounded ue() values; sum them in 64
+     * bit so the products cannot wrap, and require the crop to leave
+     * a non-empty picture. */
+    crop_w = ((guint64) sps->conf_win_left_offset +
+        sps->conf_win_right_offset) * crop_unit_x;
+    crop_h = ((guint64) sps->conf_win_top_offset +
+        sps->conf_win_bottom_offset) * crop_unit_y;
+
+    if (crop_w >= (guint64) sps->width || crop_h >= (guint64) sps->height) {
+      GST_WARNING ("conformance window crops the whole picture in SPS");
+      goto error;
+    }
+
+    sps->crop_rect_width = (gint) ((guint64) sps->width - crop_w);
+    sps->crop_rect_height = (gint) ((guint64) sps->height - crop_h);
     sps->crop_rect_x = sps->conf_win_left_offset * crop_unit_x;
     sps->crop_rect_y = sps->conf_win_top_offset * crop_unit_y;
 
-    GST_LOG ("crop_rectangle x=%u y=%u width=%u, height=%u", sps->crop_rect_x,
+    GST_LOG ("crop_rectangle x=%u y=%u width=%d, height=%d", sps->crop_rect_x,
         sps->crop_rect_y, sps->crop_rect_width, sps->crop_rect_height);
   }
 
@@ -3191,7 +3216,7 @@ GstH265ParserResult
 gst_h265_parser_parse_slice_hdr (GstH265Parser * parser,
     GstH265NalUnit * nalu, GstH265SliceHdr * slice)
 {
-  GstH265SPSEXT sps_ext;
+  GstH265SPSEXT sps_ext = { 0 };
 
   return gst_h265_parser_parse_slice_hdr_ext (parser, nalu, slice, &sps_ext);
 }
@@ -3232,7 +3257,11 @@ gst_h265_parser_parse_sei_message (GstH265Parser * parser,
   }
   while (payload_size_byte == 0xff);
 
-  remaining = nal_reader_get_remaining (nr);
+  /* nal_reader_get_remaining() includes emulation prevention bytes, but
+   * payloadSize counts RBSP bytes. Also tolerate broken streams which count
+   * emulation prevention bytes in payloadSize by limiting the payload to the
+   * RBSP data that is actually available. */
+  remaining = nal_reader_get_remaining_payload_bits (nr);
   payload_size = payloadSize * 8 < remaining ? payloadSize * 8 : remaining;
 
   payload_start_pos_bit = nal_reader_get_pos (nr);
@@ -3295,6 +3324,10 @@ gst_h265_parser_parse_sei_message (GstH265Parser * parser,
         break;
     }
   }
+
+  /* A failed message may still own allocations, drop them before returning. */
+  if (res != GST_H265_PARSER_OK)
+    goto error;
 
   /* Not parsing the reserved_payload_extension, but it shouldn't be
    * an issue because of 1: There shall not be any reserved_payload_extension
@@ -3400,7 +3433,9 @@ gst_h265_sei_copy (GstH265SEIMessage * dst_sei,
     GstH265PicTiming *dst_pic_timing = &dst_sei->payload.pic_timing;
     const GstH265PicTiming *src_pic_timing = &src_sei->payload.pic_timing;
 
-    if (dst_pic_timing->num_decoding_units_minus1 > 0) {
+    /* The arrays are allocated for a single decoding unit too, so their
+     * presence, not num_decoding_units_minus1, tells whether to copy them. */
+    if (src_pic_timing->num_nalus_in_du_minus1) {
       dst_pic_timing->num_nalus_in_du_minus1 =
           g_new0 (guint32, (dst_pic_timing->num_decoding_units_minus1 + 1));
       dst_pic_timing->du_cpb_removal_delay_increment_minus1 =
@@ -3450,12 +3485,11 @@ gst_h265_sei_free (GstH265SEIMessage * sei)
 
   if (sei->payloadType == GST_H265_SEI_PIC_TIMING) {
     GstH265PicTiming *pic_timing = &sei->payload.pic_timing;
-    if (pic_timing->num_decoding_units_minus1 > 0) {
-      g_free (pic_timing->num_nalus_in_du_minus1);
-      g_free (pic_timing->du_cpb_removal_delay_increment_minus1);
-    }
-    pic_timing->num_nalus_in_du_minus1 = 0;
-    pic_timing->du_cpb_removal_delay_increment_minus1 = 0;
+
+    g_free (pic_timing->num_nalus_in_du_minus1);
+    g_free (pic_timing->du_cpb_removal_delay_increment_minus1);
+    pic_timing->num_nalus_in_du_minus1 = NULL;
+    pic_timing->du_cpb_removal_delay_increment_minus1 = NULL;
   } else if (sei->payloadType == GST_H265_SEI_REGISTERED_USER_DATA) {
     GstH265RegisteredUserData *rud = &sei->payload.registered_user_data;
     g_free ((guint8 *) rud->data);
@@ -4310,7 +4344,9 @@ gst_h265_write_sei_user_data_unregistered (NalWriter * nw,
     GstH265UserDataUnregistered * udu)
 {
   WRITE_BYTES (nw, udu->uuid, 16);
-  WRITE_BYTES (nw, udu->data, udu->size);
+  if (udu->size > 0) {
+    WRITE_BYTES (nw, udu->data, udu->size);
+  }
 
   return TRUE;
 

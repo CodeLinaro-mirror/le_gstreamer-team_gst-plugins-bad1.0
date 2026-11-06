@@ -349,7 +349,7 @@ av1_bitstreamfn_uvlc (GstBitReader * br, GstAV1ParserResult * retval)
     return 0;
   }
 
-  value = readv + (1 << leadingZero) - 1;
+  value = readv + (1U << leadingZero) - 1;
 
   return value;
 }
@@ -414,7 +414,7 @@ av1_bitstreamfn_le (GstBitReader * br, guint8 n, GstAV1ParserResult * retval)
     if (*retval != GST_AV1_PARSER_OK)
       return 0;
 
-    t += (byte << (i * 8));
+    t += ((guint) byte << (i * 8));
   }
   return t;
 }
@@ -1171,7 +1171,10 @@ gst_av1_parser_parse_sequence_header_obu (GstAV1Parser * parser,
     seq_header->initial_display_delay_present_flag = 0;
     seq_header->operating_points_cnt_minus_1 = 0;
     seq_header->operating_points[0].idc = 0;
-    seq_header->operating_points[0].seq_level_idx = AV1_READ_BITS (br, 5);
+    seq_header->operating_points[0].seq_level_idx =
+        AV1_READ_BITS_CHECKED (br, 5, &retval);
+    if (retval != GST_AV1_PARSER_OK)
+      goto error;
     if (!av1_seq_level_idx_is_valid
         (seq_header->operating_points[0].seq_level_idx)) {
       GST_INFO ("The seq_level_idx is unsupported");
@@ -1234,13 +1237,18 @@ gst_av1_parser_parse_sequence_header_obu (GstAV1Parser * parser,
         goto error;
       }
       if (seq_header->operating_points[i].seq_level_idx > GST_AV1_SEQ_LEVEL_3_3) {
-        seq_header->operating_points[i].seq_tier = AV1_READ_BIT (br);
+        seq_header->operating_points[i].seq_tier =
+            AV1_READ_BIT_CHECKED (br, &retval);
+        if (retval != GST_AV1_PARSER_OK)
+          goto error;
       } else {
         seq_header->operating_points[i].seq_tier = 0;
       }
       if (seq_header->decoder_model_info_present_flag) {
         seq_header->operating_points[i].decoder_model_present_for_this_op =
-            AV1_READ_BIT (br);
+            AV1_READ_BIT_CHECKED (br, &retval);
+        if (retval != GST_AV1_PARSER_OK)
+          goto error;
         if (seq_header->operating_points[i].decoder_model_present_for_this_op)
           retval =
               gst_av1_parse_operating_parameters_info (parser, br, seq_header,
@@ -1287,15 +1295,23 @@ gst_av1_parser_parse_sequence_header_obu (GstAV1Parser * parser,
      operatingPoint = choose_operating_point( )
      operating_point_idc = operating_point_idc[ operatingPoint ] */
 
-  if (AV1_REMAINING_BITS (br) < 4 + 4 +
-      (seq_header->frame_width_bits_minus_1 + 1) +
-      (seq_header->frame_height_bits_minus_1 + 1)) {
+  if (AV1_REMAINING_BITS (br) < 4 + 4) {
     retval = GST_AV1_PARSER_NO_MORE_DATA;
     goto error;
   }
 
   seq_header->frame_width_bits_minus_1 = AV1_READ_BITS (br, 4);
   seq_header->frame_height_bits_minus_1 = AV1_READ_BITS (br, 4);
+
+  /* The frame sizes are encoded relative to the bit widths just read,
+   * so the remaining bits can only be checked after those fields have
+   * been parsed. */
+  if (AV1_REMAINING_BITS (br) < (seq_header->frame_width_bits_minus_1 + 1) +
+      (seq_header->frame_height_bits_minus_1 + 1)) {
+    retval = GST_AV1_PARSER_NO_MORE_DATA;
+    goto error;
+  }
+
   seq_header->max_frame_width_minus_1 =
       AV1_READ_BITS (br, seq_header->frame_width_bits_minus_1 + 1);
   seq_header->max_frame_height_minus_1 =
@@ -1924,6 +1940,16 @@ gst_av1_parse_frame_size_with_refs (GstAV1Parser * parser,
 
     if (found_ref == 1) {
       gint ref_idx = frame_header->ref_frame_idx[i];
+
+      /* The reference slot may never have been filled by a parsed
+       * frame, in which case it carries a zero size; a zero frame size
+       * would propagate into the tile grid and divide by zero there. */
+      if (G_UNLIKELY (ref_info->entry[ref_idx].ref_frame_width == 0 ||
+              ref_info->entry[ref_idx].ref_frame_height == 0)) {
+        GST_WARNING ("Frame size reference %d has no known size", ref_idx);
+        return GST_AV1_PARSER_MISSING_OBU_REFERENCE;
+      }
+
       parser->state.upscaled_width =
           ref_info->entry[ref_idx].ref_upscaled_width;
       parser->state.frame_width = parser->state.upscaled_width;
@@ -2886,7 +2912,7 @@ gst_av1_parse_global_param (GstAV1Parser * parser,
     gint32 prev_gm_params[GST_AV1_NUM_REF_FRAMES][6], gint ref, gint idx)
 {
   GstAV1ParserResult retval;
-  gint prec_diff /* precDiff */ , wm_round, mx, r;
+  gint prec_diff /* precDiff */ , wm_round, mx, r, val;
   gint abs_bits /* absBits */  = GST_AV1_GM_ABS_ALPHA_BITS;
   gint prec_bits /* precBits */  = GST_AV1_GM_ALPHA_PREC_BITS;
   gint sub;
@@ -2910,11 +2936,13 @@ gst_av1_parse_global_param (GstAV1Parser * parser,
   sub = (idx % 3) == 2 ? (1 << prec_bits) : 0;
   mx = (1 << abs_bits);
   r = (prev_gm_params[ref][idx] >> prec_diff) - sub;
-  gm_params->gm_params[ref][idx] =
-      (gst_av1_decode_signed_subexp_with_ref (br, -mx, mx + 1, r,
-          &retval) << prec_diff) + wm_round;
+  val = gst_av1_decode_signed_subexp_with_ref (br, -mx, mx + 1, r, &retval);
   if (retval != GST_AV1_PARSER_OK)
     return retval;
+  /* The decoded value is signed; scale it by multiplication, as
+   * left-shifting a negative value is undefined. The product fits a
+   * gint: |val| <= 2^12 + 1 and prec_diff <= 14. */
+  gm_params->gm_params[ref][idx] = val * (1 << prec_diff) + wm_round;
   return GST_AV1_PARSER_OK;
 }
 
@@ -4418,7 +4446,8 @@ gst_av1_parse_tile_group (GstAV1Parser * parser, GstBitReader * br,
       goto error;
   }
 
-  if (tile_group->tg_end < tile_group->tg_start) {
+  if (tile_group->tg_end < tile_group->tg_start ||
+      tile_group->tg_end >= tile_group->num_tiles) {
     retval = GST_AV1_PARSER_NO_MORE_DATA;
     goto error;
   }

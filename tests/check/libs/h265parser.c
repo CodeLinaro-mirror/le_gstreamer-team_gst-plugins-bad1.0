@@ -113,6 +113,13 @@ static guint8 h265_sei_pic_timing[] = {
   0xff, 0xfe, 0x80
 };
 
+/* Same picture timing SEI, but the payload ends while the decoding unit loop
+ * is still running. The decoding unit arrays have been allocated by then. */
+static guint8 h265_sei_pic_timing_truncated[] = {
+  0x00, 0x00, 0x00, 0x01, 0x4e, 0x01, 0x01, 0x10, 0x04, 0x00, 0x00, 0x03, 0x00,
+  0x00, 0x03, 0x00, 0x00, 0x03, 0x00, 0x00, 0x03, 0x00, 0x08, 0xaf
+};
+
 /* hdr10plus dynamic metadata */
 static guint8 h265_sei_user_data_registered[] = {
   0x00, 0x00, 0x00, 0x01, 0x4e, 0x01, 0x04, 0x40, 0xb5, 0x00, 0x3c, 0x00, 0x01,
@@ -130,6 +137,17 @@ static guint8 h265_sei_user_data_unregistered[] = {
   0x4D, 0x49, 0x53, 0x50, 0x6D, 0x69, 0x63, 0x72, 0x6F, 0x73, 0x65, 0x63,
   0x74, 0x69, 0x6D, 0x65,       // UUID.
   0x70, 0x69, 0x67, 0x73, 0x20, 0x66, 0x6c, 0x79,       // Payload data
+  0x80
+};
+
+/* Broken stream where payloadSize includes the emulation_prevention_three_byte
+ * in the UUID. */
+static guint8 h265_sei_user_data_unregistered_ebsp_size[] = {
+  0x00, 0x00, 0x00, 0x01, 0x4e, 0x01,
+  0x05, 0x18,
+  0x01, 0x00, 0x00, 0x03, 0x00, 0x02, 0x03, 0x04,
+  0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d,
+  0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
   0x80
 };
 
@@ -197,6 +215,46 @@ GST_START_TEST (test_h265_parse_slice_eos_slice_eob)
 
 GST_END_TEST;
 
+GST_START_TEST (test_h265_sei_user_data_unregistered_ebsp_size)
+{
+  static const guint8 expected_uuid[] = {
+    0x01, 0x00, 0x00, 0x00, 0x02, 0x03, 0x04, 0x05,
+    0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d
+  };
+  static const guint8 expected_data[] = {
+    0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17
+  };
+  GstH265Parser *parser = gst_h265_parser_new ();
+  GstH265ParserResult res;
+  GstH265NalUnit nalu;
+  GArray *messages = NULL;
+  GstH265SEIMessage *sei;
+  GstH265UserDataUnregistered *user_data;
+
+  res = gst_h265_parser_identify_nalu_unchecked (parser,
+      h265_sei_user_data_unregistered_ebsp_size, 0,
+      G_N_ELEMENTS (h265_sei_user_data_unregistered_ebsp_size), &nalu);
+  assert_equals_int (res, GST_H265_PARSER_OK);
+
+  res = gst_h265_parser_parse_sei (parser, &nalu, &messages);
+  assert_equals_int (res, GST_H265_PARSER_OK);
+  assert_equals_int (messages->len, 1);
+
+  sei = &g_array_index (messages, GstH265SEIMessage, 0);
+  assert_equals_int (sei->payloadType, GST_H265_SEI_USER_DATA_UNREGISTERED);
+  user_data = &sei->payload.user_data_unregistered;
+  fail_unless (memcmp (user_data->uuid, expected_uuid,
+          sizeof (expected_uuid)) == 0);
+  assert_equals_int (user_data->size, sizeof (expected_data));
+  fail_unless (memcmp (user_data->data, expected_data,
+          sizeof (expected_data)) == 0);
+
+  g_array_unref (messages);
+  gst_h265_parser_free (parser);
+}
+
+GST_END_TEST;
+
 GST_START_TEST (test_h265_parse_pic_timing)
 {
   GstH265NalUnit nalu;
@@ -243,6 +301,71 @@ GST_START_TEST (test_h265_parse_pic_timing)
   }
   g_array_free (messages, TRUE);
   gst_h265_parser_free (parser);
+}
+
+GST_END_TEST;
+
+GST_START_TEST (test_h265_parse_pic_timing_truncated)
+{
+  GstH265NalUnit nalu;
+  GstH265Parser *parser = gst_h265_parser_new ();
+  const guint8 *buf = h265_sps;
+  guint buf_size = sizeof (h265_sps);
+  GArray *messages;
+  GstH265SPS sps;
+
+  assert_equals_int (gst_h265_parser_identify_nalu (parser, buf, 0, buf_size,
+          &nalu), GST_H265_PARSER_NO_NAL_END);
+  assert_equals_int (gst_h265_parser_parse_sps (parser, &nalu, &sps, TRUE),
+      GST_H265_PARSER_OK);
+
+  buf = h265_sei_pic_timing_truncated;
+  buf_size = sizeof (h265_sei_pic_timing_truncated);
+
+  assert_equals_int (gst_h265_parser_identify_nalu (parser, buf, 0, buf_size,
+          &nalu), GST_H265_PARSER_NO_NAL_END);
+  assert_equals_int (nalu.type, GST_H265_NAL_PREFIX_SEI);
+
+  /* The message must be rejected, and the arrays allocated for its decoding
+   * units must not be leaked. */
+  assert_equals_int (gst_h265_parser_parse_sei (parser, &nalu, &messages),
+      GST_H265_PARSER_ERROR);
+  assert_equals_int (messages->len, 0);
+
+  g_array_free (messages, TRUE);
+  gst_h265_parser_free (parser);
+}
+
+GST_END_TEST;
+
+GST_START_TEST (test_h265_sei_free_pic_timing_single_du)
+{
+  GstH265SEIMessage sei = { 0, };
+  GstH265SEIMessage copy = { 0, };
+
+  /* A single decoding unit still gets arrays allocated by the parser. */
+  sei.payloadType = GST_H265_SEI_PIC_TIMING;
+  sei.payload.pic_timing.num_decoding_units_minus1 = 0;
+  sei.payload.pic_timing.num_nalus_in_du_minus1 = g_new0 (guint32, 1);
+  sei.payload.pic_timing.du_cpb_removal_delay_increment_minus1 =
+      g_new0 (guint8, 1);
+
+  /* The copy must own its own arrays, not alias the source ones. */
+  fail_unless (gst_h265_sei_copy (&copy, &sei));
+  fail_unless (copy.payload.pic_timing.num_nalus_in_du_minus1 != NULL);
+  fail_unless (copy.payload.pic_timing.num_nalus_in_du_minus1 !=
+      sei.payload.pic_timing.num_nalus_in_du_minus1);
+  fail_unless (copy.payload.pic_timing.du_cpb_removal_delay_increment_minus1 !=
+      NULL);
+  fail_unless (copy.payload.pic_timing.du_cpb_removal_delay_increment_minus1 !=
+      sei.payload.pic_timing.du_cpb_removal_delay_increment_minus1);
+
+  gst_h265_sei_free (&copy);
+  gst_h265_sei_free (&sei);
+
+  fail_unless (sei.payload.pic_timing.num_nalus_in_du_minus1 == NULL);
+  fail_unless (sei.payload.pic_timing.du_cpb_removal_delay_increment_minus1 ==
+      NULL);
 }
 
 GST_END_TEST;
@@ -1492,6 +1615,86 @@ GST_START_TEST (test_h265_parse_partial_nal)
 
 GST_END_TEST;
 
+/* SPS with a conformance window cropping more than the whole picture.
+ * The conf_win offsets are unbounded ue() values; the resulting
+ * cropped width used to wrap around and be accepted as a negative
+ * gint. */
+static guint8 h265_sps_oversized_conformance_window[] = {
+  0x00, 0x00, 0x00, 0x01, 0x42, 0x01, 0x01, 0x01, 0x80, 0x00, 0x00, 0x03,
+  0x00, 0x80, 0x00, 0x00, 0x03, 0x00, 0x00, 0x03, 0x00, 0x1e, 0xa0, 0x20,
+  0x81, 0x06, 0x06, 0x5f, 0xff, 0xf0, 0x82
+};
+
+GST_START_TEST (test_h265_parse_sps_oversized_conformance_window)
+{
+  GstH265Parser *parser;
+  GstH265NalUnit nalu;
+  GstH265SPS sps;
+  GstH265ParserResult res;
+
+  parser = gst_h265_parser_new ();
+
+  res = gst_h265_parser_identify_nalu (parser,
+      h265_sps_oversized_conformance_window, 0,
+      sizeof (h265_sps_oversized_conformance_window), &nalu);
+  assert_equals_int (res, GST_H265_PARSER_NO_NAL_END);
+  assert_equals_int (nalu.type, GST_H265_NAL_SPS);
+
+  res = gst_h265_parser_parse_sps (parser, &nalu, &sps, TRUE);
+  assert_equals_int (res, GST_H265_PARSER_ERROR);
+
+  gst_h265_parser_free (parser);
+}
+
+GST_END_TEST;
+
+GST_START_TEST (test_h265_reject_forbidden_nals)
+{
+  const guint8 annexb[] = { 0x00, 0x00, 0x01, 0xc6, 0x01, 0x80 };
+  const guint8 single[] = { 0x00, 0x00, 0x00, 0x02, 0xc6, 0x01 };
+  guint8 packet[] = {
+    0x00, 0x00, 0x00, 0x11,
+    0x46, 0x01,
+    0x00, 0x00, 0x01, 0xc6, 0x01,
+    0x00, 0x00, 0x01, 0x48, 0x01,
+    0x00, 0x00, 0x01, 0xc8, 0x01
+  };
+  GstH265Parser *parser = gst_h265_parser_new ();
+  GstH265NalUnit nalu = { 0, };
+  GArray *nalus = g_array_new (FALSE, FALSE, sizeof (GstH265NalUnit));
+  gsize consumed;
+
+  fail_unless_equals_int (gst_h265_parser_identify_nalu (parser,
+          annexb, 0, sizeof (annexb), &nalu), GST_H265_PARSER_BROKEN_DATA);
+  fail_unless_equals_int (gst_h265_parser_identify_nalu_hevc (parser,
+          single, 0, sizeof (single), 4, &nalu), GST_H265_PARSER_BROKEN_DATA);
+
+  /* Keep valid NALs before and after a forbidden chunk, including when
+   * the last chunk is forbidden. */
+  fail_unless_equals_int (gst_h265_parser_identify_and_split_nalu_hevc (parser,
+          packet, 0, sizeof (packet), 4, nalus, &consumed), GST_H265_PARSER_OK);
+  fail_unless_equals_int (consumed, sizeof (packet));
+  fail_unless_equals_int (nalus->len, 2);
+  fail_unless_equals_int (g_array_index (nalus, GstH265NalUnit, 0).type,
+      GST_H265_NAL_AUD);
+  fail_unless_equals_int (g_array_index (nalus, GstH265NalUnit, 1).type,
+      GST_H265_NAL_EOS);
+
+  /* An entirely forbidden packet must not produce any usable NALs. */
+  packet[4] |= 0x80;
+  packet[14] |= 0x80;
+  fail_unless_equals_int (gst_h265_parser_identify_and_split_nalu_hevc (parser,
+          packet, 0, sizeof (packet), 4, nalus, &consumed),
+      GST_H265_PARSER_BROKEN_DATA);
+  fail_unless_equals_int (consumed, sizeof (packet));
+  fail_unless_equals_int (nalus->len, 0);
+
+  g_array_unref (nalus);
+  gst_h265_parser_free (parser);
+}
+
+GST_END_TEST;
+
 static Suite *
 h265parser_suite (void)
 {
@@ -1500,8 +1703,11 @@ h265parser_suite (void)
   TCase *tc_chain = tcase_create ("general");
 
   suite_add_tcase (s, tc_chain);
+  tcase_add_test (tc_chain, test_h265_reject_forbidden_nals);
   tcase_add_test (tc_chain, test_h265_parse_slice_eos_slice_eob);
   tcase_add_test (tc_chain, test_h265_parse_pic_timing);
+  tcase_add_test (tc_chain, test_h265_parse_pic_timing_truncated);
+  tcase_add_test (tc_chain, test_h265_sei_free_pic_timing_single_du);
   tcase_add_test (tc_chain, test_h265_parse_slice_6bytes);
   tcase_add_test (tc_chain, test_h265_parse_identify_nalu_hevc);
   tcase_add_test (tc_chain, test_h265_base_profiles);
@@ -1513,10 +1719,12 @@ h265parser_suite (void)
   tcase_add_test (tc_chain, test_h265_parse_scc);
   tcase_add_test (tc_chain, test_h265_nal_type_classification);
   tcase_add_test (tc_chain, test_h265_sei_registered_user_data);
+  tcase_add_test (tc_chain, test_h265_sei_user_data_unregistered_ebsp_size);
   tcase_add_test (tc_chain, test_h265_create_sei);
   tcase_add_test (tc_chain, test_h265_split_hevc);
   tcase_add_test (tc_chain, test_h265_decoder_config_record);
   tcase_add_test (tc_chain, test_h265_parse_partial_nal);
+  tcase_add_test (tc_chain, test_h265_parse_sps_oversized_conformance_window);
 
   return s;
 }

@@ -88,6 +88,7 @@ _gst_mpegts_atsc_vct_source_copy (GstMpegtsAtscVCTSource * source)
   GstMpegtsAtscVCTSource *copy;
 
   copy = g_memdup2 (source, sizeof (GstMpegtsAtscVCTSource));
+  copy->short_name = g_strdup (source->short_name);
   copy->descriptors = g_ptr_array_ref (source->descriptors);
 
   return copy;
@@ -399,6 +400,10 @@ _parse_atsc_mgt (GstMpegtsSection * section)
     data += descriptors_loop_length;
   }
 
+  if (end - data < 2) {
+    GST_WARNING ("MGT data too short to parse descriptors");
+    goto error;
+  }
   descriptors_loop_length = GST_READ_UINT16_BE (data) & 0xFFF;
   data += 2;
   if (data + descriptors_loop_length >= end) {
@@ -441,7 +446,7 @@ _packetize_mgt (GstMpegtsSection * section)
   length = 17;
 
   for (i = 0; i < mgt->tables->len; i++) {
-    GstMpegtsAtscMGTTable *mgt_table = g_ptr_array_index (mgt->tables, 1);
+    GstMpegtsAtscMGTTable *mgt_table = g_ptr_array_index (mgt->tables, i);
     /* 2 byte table_type
      * 2 byte reserved / table_type_PID
      * 1 byte reserved / table_type_version_number
@@ -479,7 +484,7 @@ _packetize_mgt (GstMpegtsSection * section)
   data += 2;
 
   for (i = 0; i < mgt->tables_defined; i++) {
-    GstMpegtsAtscMGTTable *mgt_table = g_ptr_array_index (mgt->tables, 1);
+    GstMpegtsAtscMGTTable *mgt_table = g_ptr_array_index (mgt->tables, i);
 
     /* table_type - 16 bit uimsbf */
     GST_WRITE_UINT16_BE (data, mgt_table->table_type);
@@ -492,6 +497,10 @@ _packetize_mgt (GstMpegtsSection * section)
     /* 3 bit reserved, 5 bit table_type_version_number uimsbf */
     GST_WRITE_UINT8 (data, mgt_table->version_number | 0xe0);
     data += 1;
+
+    /* 32 bit table_type_number_bytes uimsbf */
+    GST_WRITE_UINT32_BE (data, mgt_table->number_bytes);
+    data += 4;
 
     /* 4 bit reserved, 12 bit table_type_descriptor_length uimsbf */
     pos = data;
@@ -596,6 +605,9 @@ _gst_mpegts_atsc_string_segment_copy (GstMpegtsAtscStringSegment * seg)
   GstMpegtsAtscStringSegment *copy;
 
   copy = g_memdup2 (seg, sizeof (GstMpegtsAtscStringSegment));
+  copy->cached_string = g_strdup (seg->cached_string);
+  copy->compressed_data =
+      g_memdup2 (seg->compressed_data, seg->compressed_data_size);
 
   return copy;
 }
@@ -604,6 +616,7 @@ static void
 _gst_mpegts_atsc_string_segment_free (GstMpegtsAtscStringSegment * seg)
 {
   g_free (seg->cached_string);
+  g_free (seg->compressed_data);
   g_free (seg);
 }
 
@@ -667,6 +680,9 @@ gst_mpegts_atsc_string_segment_set_string (GstMpegtsAtscStringSegment * seg,
   GError *err = NULL;
   unsigned long len;
 
+  g_return_val_if_fail (seg != NULL, FALSE);
+  g_return_val_if_fail (string != NULL, FALSE);
+
   if (compression_type) {
     GST_FIXME ("Compressed strings not yet supported");
     goto done;
@@ -680,11 +696,9 @@ gst_mpegts_atsc_string_segment_set_string (GstMpegtsAtscStringSegment * seg,
       break;
   }
 
-  if (seg->cached_string)
-    g_free (seg->cached_string);
-
-  if (seg->compressed_data)
-    g_free (seg->compressed_data);
+  g_clear_pointer (&seg->cached_string, g_free);
+  g_clear_pointer (&seg->compressed_data, g_free);
+  seg->compressed_data_size = 0;
 
   seg->cached_string = g_strdup (string);
   seg->compression_type = compression_type;
@@ -812,7 +826,7 @@ _parse_atsc_mult_string (guint8 * data, guint datasize)
         }
 
         if (seg->compressed_data_size)
-          seg->compressed_data = data;
+          seg->compressed_data = g_memdup2 (data, seg->compressed_data_size);
         data += seg->compressed_data_size;
       }
 
@@ -852,8 +866,11 @@ _packetize_atsc_mult_string (GPtrArray * strings, guint8 ** data)
     GST_WRITE_UINT8 (*data, string->iso_639_langcode[2]);
     *data += 1;
     /* 8 bit number_segments */
-    GST_WRITE_UINT8 (*data, string->segments->len);
+    GST_WRITE_UINT8 (*data, string->segments ? string->segments->len : 0);
     *data += 1;
+
+    if (string->segments == NULL)
+      continue;
 
     for (j = 0; j < string->segments->len; j++) {
       GstMpegtsAtscStringSegment *seg;
@@ -882,6 +899,9 @@ _get_atsc_mult_string_packetized_length (GPtrArray * strings)
   gsize length = 1;
   guint i;
 
+  if (strings == NULL)
+    return 0;
+
   for (i = 0; i < strings->len; i++) {
     GstMpegtsAtscMultString *string;
     guint j;
@@ -889,6 +909,9 @@ _get_atsc_mult_string_packetized_length (GPtrArray * strings)
     string = g_ptr_array_index (strings, i);
 
     length += 4;
+
+    if (string->segments == NULL)
+      continue;
 
     for (j = 0; j < string->segments->len; j++) {
       GstMpegtsAtscStringSegment *seg;
@@ -1161,6 +1184,8 @@ _gst_mpegts_atsc_stt_copy (GstMpegtsAtscSTT * stt)
 
   copy = g_memdup2 (stt, sizeof (GstMpegtsAtscSTT));
   copy->descriptors = g_ptr_array_ref (stt->descriptors);
+  if (stt->utc_datetime)
+    copy->utc_datetime = gst_date_time_ref (stt->utc_datetime);
 
   return copy;
 }
@@ -1455,13 +1480,14 @@ _parse_rrt (GstMpegtsSection * section)
 {
   GstMpegtsAtscRRT *rrt = NULL;
   guint i = 0;
-  guint8 *data;
+  guint8 *data, *end;
   guint16 descriptors_loop_length;
   guint8 text_length;
 
   rrt = g_new0 (GstMpegtsAtscRRT, 1);
 
   data = section->data;
+  end = data + section->section_length;
 
   /* Skip already parsed data */
   data += 8;
@@ -1471,10 +1497,14 @@ _parse_rrt (GstMpegtsSection * section)
 
   text_length = GST_READ_UINT8 (data);
   data += 1;
+  if (text_length > (gsize) (end - 4 - data))
+    goto error;
   rrt->names = _parse_atsc_mult_string (data, text_length);
   data += text_length;
 
-  rrt->dimensions_defined = GST_READ_UINT8 (data);
+  if (end - 4 - data < 1)
+    goto error;
+  rrt->dimensions_defined = GST_READ_UINT8 (data) & 0x1f;
   data += 1;
 
   rrt->dimensions = g_ptr_array_new_full (rrt->dimensions_defined,
@@ -1488,11 +1518,17 @@ _parse_rrt (GstMpegtsSection * section)
     dim = g_new0 (GstMpegtsAtscRRTDimension, 1);
     g_ptr_array_add (rrt->dimensions, dim);
 
+    if (end - 4 - data < 1)
+      goto error;
     text_length = GST_READ_UINT8 (data);
     data += 1;
+    if (text_length > (gsize) (end - 4 - data))
+      goto error;
     dim->names = _parse_atsc_mult_string (data, text_length);
     data += text_length;
 
+    if (end - 4 - data < 1)
+      goto error;
     tmp = GST_READ_UINT8 (data);
     data += 1;
 
@@ -1508,24 +1544,42 @@ _parse_rrt (GstMpegtsSection * section)
       val = g_new0 (GstMpegtsAtscRRTDimensionValue, 1);
       g_ptr_array_add (dim->values, val);
 
+      if (end - 4 - data < 1)
+        goto error;
       text_length = GST_READ_UINT8 (data);
       data += 1;
+      if (text_length > (gsize) (end - 4 - data))
+        goto error;
       val->abbrev_ratings = _parse_atsc_mult_string (data, text_length);
       data += text_length;
 
+      if (end - 4 - data < 1)
+        goto error;
       text_length = GST_READ_UINT8 (data);
       data += 1;
+      if (text_length > (gsize) (end - 4 - data))
+        goto error;
       val->ratings = _parse_atsc_mult_string (data, text_length);
       data += text_length;
     }
   }
 
+  if (end - 4 - data < 2)
+    goto error;
   descriptors_loop_length = GST_READ_UINT16_BE (data) & 0x3FF;
   data += 2;
+  if (descriptors_loop_length > (gsize) (end - 4 - data))
+    goto error;
   rrt->descriptors =
       gst_mpegts_parse_descriptors (data, descriptors_loop_length);
 
   return (gpointer) rrt;
+
+error:
+  GST_WARNING ("Invalid RRT section, aborting parsing");
+  _gst_mpegts_atsc_rrt_free (rrt);
+
+  return NULL;
 }
 
 static gboolean
@@ -1600,6 +1654,10 @@ _packetize_rrt (GstMpegtsSection * section)
 
   _packetize_atsc_mult_string (rrt->names, &data);
 
+  /* 3 bit reserved / 5 bit dimensions_defined uimsbf */
+  GST_WRITE_UINT8 (data, 0xe0 | (rrt->dimensions_defined & 0x1f));
+  data += 1;
+
   for (i = 0; i < rrt->dimensions->len; i++) {
     GstMpegtsAtscRRTDimension *dim = g_ptr_array_index (rrt->dimensions, i);
 
@@ -1608,7 +1666,7 @@ _packetize_rrt (GstMpegtsSection * section)
         _get_atsc_mult_string_packetized_length (dim->names));
     data += 1;
 
-    _packetize_atsc_mult_string (rrt->names, &data);
+    _packetize_atsc_mult_string (dim->names, &data);
 
     /* 3 bit reserved / 1 bit graduated_scale / 4 bit values_defined */
     GST_WRITE_UINT8 (data,

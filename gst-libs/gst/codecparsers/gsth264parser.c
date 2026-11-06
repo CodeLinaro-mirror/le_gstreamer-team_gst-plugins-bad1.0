@@ -206,6 +206,9 @@ gst_h264_parse_nalu_header (GstH264NalUnit * nalu)
   if (nalu->size < 1)
     return FALSE;
 
+  if (data[0] & 0x80)
+    return FALSE;
+
   nalu->type = (data[0] & 0x1f);
   nalu->ref_idc = (data[0] & 0x60) >> 5;
   nalu->idr_pic_flag = (nalu->type == 5 ? 1 : 0);
@@ -1219,8 +1222,11 @@ gst_h264_parser_parse_frame_packing (GstH264NalParser * nalparser,
      after the value 1 for frame_packing_arrangement_extension_flag shall
      be ignored (D.2.25) */
   if (frame_packing_extension_flag) {
-    nal_reader_skip_long (nr,
-        payload_size - (nal_reader_get_pos (nr) - start_pos));
+    guint consumed = nal_reader_get_pos (nr) - start_pos;
+
+    if (consumed > payload_size ||
+        !nal_reader_skip_long (nr, payload_size - consumed))
+      goto error;
   }
 
   return GST_H264_PARSER_OK;
@@ -1323,7 +1329,11 @@ gst_h264_parser_parse_sei_message (GstH264NalParser * nalparser,
   }
   while (payload_size_byte == 0xff);
 
-  remaining = nal_reader_get_remaining (nr);
+  /* nal_reader_get_remaining() includes emulation prevention bytes, but
+   * payloadSize counts RBSP bytes. Also tolerate broken streams which count
+   * emulation prevention bytes in payloadSize by limiting the payload to the
+   * RBSP data that is actually available. */
+  remaining = nal_reader_get_remaining_payload_bits (nr);
   payload_size = payloadSize * 8 < remaining ? payloadSize * 8 : remaining;
   next = nal_reader_get_pos (nr) + payload_size;
 
@@ -1376,6 +1386,14 @@ gst_h264_parser_parse_sei_message (GstH264NalParser * nalparser,
       sei->payloadType = GST_H264_SEI_UNHANDLED_PAYLOAD;
       break;
   }
+
+  /* A failed payload parse can leave the reader in an inconsistent
+   * state; reading from it any further is undefined. BROKEN_LINK is
+   * returned before the payload is consumed, so the message can still
+   * be skipped over and reported for retry. */
+  if (G_UNLIKELY (res != GST_H264_PARSER_OK
+          && res != GST_H264_PARSER_BROKEN_LINK))
+    goto error;
 
   /* When SEI message doesn't end at byte boundary,
    * check remaining bits fit the specification.
@@ -1497,6 +1515,13 @@ gst_h264_parser_identify_nalu_unchecked (GstH264NalParser * nalparser,
   nalu->offset = offset + off1 + 3;
   nalu->data = (guint8 *) data;
   nalu->size = size - nalu->offset;
+
+  /* An invalid header cannot become valid by appending more data. */
+  if (data[nalu->offset] & 0x80) {
+    GST_WARNING ("NAL has forbidden_zero_bit set");
+    nalu->size = 0;
+    return GST_H264_PARSER_BROKEN_DATA;
+  }
 
   if (!gst_h264_parse_nalu_header (nalu)) {
     GST_DEBUG ("not enough data to parse \"NAL unit header\"");
@@ -1767,8 +1792,8 @@ gst_h264_parser_identify_and_split_nalu_avc (GstH264NalParser * nalparser,
         nalu.data = (guint8 *) data;
         nalu.valid = TRUE;
 
-        gst_h264_parse_nalu_header (&nalu);
-        g_array_append_val (nalus, nalu);
+        if (gst_h264_parse_nalu_header (&nalu))
+          g_array_append_val (nalus, nalu);
       }
       break;
     } else if ((sc_offset == 2 && data[off + sc_offset - 1] != 0)
@@ -1787,8 +1812,8 @@ gst_h264_parser_identify_and_split_nalu_avc (GstH264NalParser * nalparser,
       nalu.data = (guint8 *) data;
       nalu.valid = TRUE;
 
-      gst_h264_parse_nalu_header (&nalu);
-      g_array_append_val (nalus, nalu);
+      if (gst_h264_parse_nalu_header (&nalu))
+        g_array_append_val (nalus, nalu);
     } else {
       /* CONDITION-C */
       /* startcode located at beginning of this chunk without actual nal data.
@@ -1882,7 +1907,7 @@ gst_h264_parser_parse_sps (GstH264NalParser * nalparser, GstH264NalUnit * nalu,
 static gboolean
 gst_h264_parse_sps_data (NalReader * nr, GstH264SPS * sps)
 {
-  gint width, height;
+  guint64 width, height;
   guint subwc[] = { 1, 2, 2, 1 };
   guint subhc[] = { 1, 2, 1, 1 };
 
@@ -1985,36 +2010,50 @@ gst_h264_parse_sps_data (NalReader * nr, GstH264SPS * sps)
   if (!sps->separate_colour_plane_flag)
     sps->chroma_array_type = sps->chroma_format_idc;
 
-  /* Calculate  width and height */
-  width = (sps->pic_width_in_mbs_minus1 + 1);
-  width *= 16;
-  height = (sps->pic_height_in_map_units_minus1 + 1);
-  height *= 16 * (2 - sps->frame_mbs_only_flag);
-  GST_LOG ("initial width=%d, height=%d", width, height);
-  if (width < 0 || height < 0) {
+  /* Calculate  width and height. The ue() values are unbounded, so
+   * compute in unsigned 64 bit arithmetic, which cannot overflow, and
+   * convert to gint only after the range checks. */
+  width = (guint64) (sps->pic_width_in_mbs_minus1 + 1) * 16;
+  height = (guint64) (sps->pic_height_in_map_units_minus1 + 1) * 16 *
+      (2 - sps->frame_mbs_only_flag);
+  GST_LOG ("initial width=%" G_GUINT64_FORMAT ", height=%" G_GUINT64_FORMAT,
+      width, height);
+  /* Reject sizes whose product does not fit a gint as well: callers
+   * multiply the two dimensions as gint values. The product cannot
+   * overflow here, as the first two comparisons short-circuit for
+   * values larger than G_MAXINT. */
+  if (width > G_MAXINT || height > G_MAXINT || width * height > G_MAXINT) {
     GST_WARNING ("invalid width/height in SPS");
     goto error;
   }
 
-  sps->width = width;
-  sps->height = height;
+  sps->width = (gint) width;
+  sps->height = (gint) height;
 
   if (sps->frame_cropping_flag) {
     const guint crop_unit_x = subwc[sps->chroma_format_idc];
     const guint crop_unit_y =
         subhc[sps->chroma_format_idc] * (2 - sps->frame_mbs_only_flag);
 
-    width -= (sps->frame_crop_left_offset + sps->frame_crop_right_offset)
-        * crop_unit_x;
-    height -= (sps->frame_crop_top_offset + sps->frame_crop_bottom_offset)
-        * crop_unit_y;
+    /* A crop larger than the frame wraps around and is rejected by
+     * the same range check. */
+    width -= ((guint64) sps->frame_crop_left_offset +
+        sps->frame_crop_right_offset) * crop_unit_x;
+    height -= ((guint64) sps->frame_crop_top_offset +
+        sps->frame_crop_bottom_offset) * crop_unit_y;
 
-    sps->crop_rect_width = width;
-    sps->crop_rect_height = height;
+    if (width == 0 || width > G_MAXINT || height == 0 || height > G_MAXINT) {
+      GST_WARNING ("invalid cropped width/height in SPS");
+      goto error;
+    }
+
+    sps->crop_rect_width = (gint) width;
+    sps->crop_rect_height = (gint) height;
     sps->crop_rect_x = sps->frame_crop_left_offset * crop_unit_x;
     sps->crop_rect_y = sps->frame_crop_top_offset * crop_unit_y;
 
-    GST_LOG ("crop_rectangle x=%u y=%u width=%u, height=%u", sps->crop_rect_x,
+    GST_LOG ("crop_rectangle x=%u y=%u width=%" G_GUINT64_FORMAT
+        ", height=%" G_GUINT64_FORMAT, sps->crop_rect_x,
         sps->crop_rect_y, width, height);
   }
 
@@ -2208,6 +2247,11 @@ GstH264ParserResult
 gst_h264_parse_subset_sps (GstH264NalUnit * nalu, GstH264SPS * sps)
 {
   NalReader nr;
+
+  if (nalu->size < 1 || (nalu->data[nalu->offset] & 0x80)) {
+    memset (sps, 0, sizeof (*sps));
+    return GST_H264_PARSER_BROKEN_DATA;
+  }
 
   GST_DEBUG ("parsing Subset SPS");
 
@@ -3024,7 +3068,9 @@ gst_h264_write_sei_user_data_unregistered (NalWriter * nw,
     GstH264UserDataUnregistered * udu)
 {
   WRITE_BYTES (nw, udu->uuid, 16);
-  WRITE_BYTES (nw, udu->data, udu->size);
+  if (udu->size > 0) {
+    WRITE_BYTES (nw, udu->data, udu->size);
+  }
 
   return TRUE;
 

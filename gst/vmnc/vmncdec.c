@@ -45,6 +45,10 @@ static gboolean gst_vmnc_dec_sink_event (GstVideoDecoder * bdec,
     GstEvent * event);
 
 #define GST_CAT_DEFAULT vmnc_debug
+
+/* Maximum screen size we allow for the screen dimensions to avoid allocating
+ * too much memory with malicious streams. */
+#define VMNC_MAX_DIMENSION 8192
 GST_DEBUG_CATEGORY_STATIC (GST_CAT_DEFAULT);
 
 #define RFB_GET_UINT32(ptr) GST_READ_UINT32_BE(ptr)
@@ -185,14 +189,24 @@ vmnc_handle_wmvi_rectangle (GstVMncDec * dec, struct RfbRectangle *rect,
     return ERROR_INSUFFICIENT_DATA;
   }
 
+  /* This function is called twice per rectangle: first while parsing the
+   * stream to determine the packet boundaries and then again with the
+   * same bytes to actually decode them. Most of the format state below
+   * is updated in both passes on purpose, because rectangles later in
+   * the same packet are validated against it. */
+
   /* We only compare 13 bytes; ignoring the 3 padding bytes at the end */
   if (dec->have_format && memcmp (data, dec->format.descriptor, 13) == 0) {
     /* Nothing changed, so just exit */
     return 16;
   }
 
-  /* Store the whole block for simple comparison later */
-  memcpy (dec->format.descriptor, data, 16);
+  /* Store the whole block for simple comparison later. Only the decode
+   * pass actually commits it: committing while parsing would make the later
+   * decode pass skip the initialisation below and leave the image data
+   * unallocated. */
+  if (decode)
+    memcpy (dec->format.descriptor, data, 16);
 
   if (rect->x != 0 || rect->y != 0) {
     GST_WARNING_OBJECT (dec, "Bad WMVi rect: wrong coordinates");
@@ -212,6 +226,12 @@ vmnc_handle_wmvi_rectangle (GstVMncDec * dec, struct RfbRectangle *rect,
 
   if (!tc) {
     GST_WARNING_OBJECT (dec, "Paletted video not supported");
+    return ERROR_INVALID;
+  }
+
+  if (data[10] >= 32 || data[11] >= 32 || data[12] >= 32) {
+    GST_WARNING_OBJECT (dec, "Bad color shift values: %d/%d/%d",
+        data[10], data[11], data[12]);
     return ERROR_INVALID;
   }
 
@@ -264,6 +284,21 @@ vmnc_handle_wmvi_rectangle (GstVMncDec * dec, struct RfbRectangle *rect,
     return ERROR_INVALID;
   }
 
+  if (decode) {
+    if (dec->have_format) {
+      /* The cursor buffers are allocated with the bytes_per_pixel that were in
+       * use when they were allocated, but render_colour_cursor() indexes them
+       * with the current bytes_per_pixel. We have to drop the cursors until a
+       * new WMVd arrives. */
+      GST_DEBUG_OBJECT (dec, "Format changed, dropping cursor");
+      g_free (dec->cursor.cursordata);
+      g_free (dec->cursor.cursormask);
+      dec->cursor.cursordata = NULL;
+      dec->cursor.cursormask = NULL;
+    }
+    dec->cursor.visible = FALSE;
+  }
+
   dec->have_format = TRUE;
   if (!decode) {
     GST_LOG_OBJECT (dec, "Parsing, not setting caps");
@@ -275,12 +310,11 @@ vmnc_handle_wmvi_rectangle (GstVMncDec * dec, struct RfbRectangle *rect,
       rect->width, rect->height, dec->input_state);
   gst_video_codec_state_unref (state);
 
+  dec->format.stride =
+      GST_ROUND_UP_4 (dec->format.width * dec->format.bytes_per_pixel);
   g_free (dec->imagedata);
-  dec->imagedata = g_malloc0 (dec->format.width * dec->format.height *
-      dec->format.bytes_per_pixel);
+  dec->imagedata = g_malloc0 (dec->format.stride * dec->format.height);
   GST_DEBUG_OBJECT (dec, "Allocated image data at %p", dec->imagedata);
-
-  dec->format.stride = dec->format.width * dec->format.bytes_per_pixel;
 
   return 16;
 }
@@ -293,9 +327,11 @@ render_colour_cursor (GstVMncDec * dec, guint8 * data, int x, int y,
   guint8 *dstraw = data + dec->format.stride * y +
       dec->format.bytes_per_pixel * x;
   guint8 *srcraw = dec->cursor.cursordata +
-      dec->cursor.width * dec->format.bytes_per_pixel * off_y;
+      dec->cursor.width * dec->format.bytes_per_pixel * off_y +
+      dec->format.bytes_per_pixel * off_x;
   guint8 *maskraw = dec->cursor.cursormask +
-      dec->cursor.width * dec->format.bytes_per_pixel * off_y;
+      dec->cursor.width * dec->format.bytes_per_pixel * off_y +
+      dec->format.bytes_per_pixel * off_x;
 
   /* Boundchecking done by caller; this is just the renderer inner loop */
   if (dec->format.bytes_per_pixel == 1) {
@@ -307,7 +343,7 @@ render_colour_cursor (GstVMncDec * dec, guint8 * data, int x, int y,
       for (j = 0; j < width; j++) {
         dst[j] = (dst[j] & src[j]) ^ mask[j];
       }
-      dst += dec->format.width;
+      dst += dec->format.stride;
       src += dec->cursor.width;
       mask += dec->cursor.width;
     }
@@ -320,7 +356,7 @@ render_colour_cursor (GstVMncDec * dec, guint8 * data, int x, int y,
       for (j = 0; j < width; j++) {
         dst[j] = (dst[j] & src[j]) ^ mask[j];
       }
-      dst += dec->format.width;
+      dst += dec->format.stride / 2;
       src += dec->cursor.width;
       mask += dec->cursor.width;
     }
@@ -333,7 +369,7 @@ render_colour_cursor (GstVMncDec * dec, guint8 * data, int x, int y,
       for (j = 0; j < width; j++) {
         dst[j] = (dst[j] & src[j]) ^ mask[j];
       }
-      dst += dec->format.width;
+      dst += dec->format.stride / 4;
       src += dec->cursor.width;
       mask += dec->cursor.width;
     }
@@ -481,7 +517,7 @@ vmnc_handle_wmve_rectangle (GstVMncDec * dec, struct RfbRectangle *rect,
     return 2;
 
   flags = RFB_GET_UINT16 (data);
-  dec->cursor.visible = flags & 0x01;
+  dec->cursor.visible = (flags & 0x01) && dec->cursor.cursordata != NULL;
 
   return 2;
 }
@@ -567,7 +603,12 @@ render_subrect (GstVMncDec * dec, int x, int y, int width,
     dst = dec->imagedata + dec->format.stride * (y + i) +
         dec->format.bytes_per_pixel * x;
     for (j = 0; j < width; j++) {
-      memcpy (dst, &colour, dec->format.bytes_per_pixel);
+      if (dec->format.bytes_per_pixel == 1)
+        dst[0] = colour;
+      else if (dec->format.bytes_per_pixel == 2)
+        GST_WRITE_UINT16_LE (dst, (guint16) colour);
+      else
+        GST_WRITE_UINT32_LE (dst, colour);
       dst += dec->format.bytes_per_pixel;
     }
   }
@@ -642,7 +683,6 @@ vmnc_handle_copy_rectangle (GstVMncDec * dec, struct RfbRectangle *rect,
   return 4;
 }
 
-/* FIXME: data+off might not be properly aligned */
 #define READ_PIXEL(pixel, data, off, len)         \
   if (dec->format.bytes_per_pixel == 1) {         \
      if (off >= len)                              \
@@ -651,12 +691,12 @@ vmnc_handle_copy_rectangle (GstVMncDec * dec, struct RfbRectangle *rect,
   } else if (dec->format.bytes_per_pixel == 2) {  \
      if (off+2 > len)                             \
        return ERROR_INSUFFICIENT_DATA;            \
-     pixel = (*(guint16 *)(data + off));          \
+     pixel = GST_READ_UINT16_LE (data + off);     \
      off += 2;                                    \
   } else {                                        \
      if (off+4 > len)                             \
        return ERROR_INSUFFICIENT_DATA;            \
-     pixel = (*(guint32 *)(data + off));          \
+     pixel = GST_READ_UINT32_LE (data + off);     \
      off += 4;                                    \
   }
 
@@ -817,8 +857,9 @@ vmnc_handle_packet (GstVMncDec * dec, const guint8 * data, int len,
             GST_WARNING_OBJECT (dec, "Rectangle out of range, type %d", r.type);
             return ERROR_INVALID;
           }
-        } else if (r.width > 16384 || r.height > 16384) {
-          GST_WARNING_OBJECT (dec, "Width or height too high: %ux%u", r.width,
+        } else if (r.width == 0 || r.height == 0 ||
+            r.width > VMNC_MAX_DIMENSION || r.height > VMNC_MAX_DIMENSION) {
+          GST_WARNING_OBJECT (dec, "Invalid WMVi dimensions: %ux%u", r.width,
               r.height);
           return ERROR_INVALID;
         }

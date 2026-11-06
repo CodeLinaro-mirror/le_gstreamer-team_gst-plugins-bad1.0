@@ -256,6 +256,7 @@ gst_h266_parse_reset_frame (GstH266Parse * h266parse)
   h266parse->have_vps_in_frame = FALSE;
   h266parse->have_sps_in_frame = FALSE;
   h266parse->have_pps_in_frame = FALSE;
+  h266parse->have_vcl_in_frame = FALSE;
   gst_adapter_clear (h266parse->frame_out);
 }
 
@@ -676,6 +677,11 @@ gst_h266_parse_process_nal (GstH266Parse * h266parse, GstH266NalUnit * nalu)
     return TRUE;
   }
 
+  if (G_UNLIKELY (nalu->data[nalu->offset] & 0x80)) {
+    GST_WARNING_OBJECT (h266parse, "NAL has forbidden_zero_bit set");
+    return FALSE;
+  }
+
   /* we have a peek as well */
   nal_type = nalu->type;
 
@@ -992,6 +998,12 @@ gst_h266_parse_collect_nal (GstH266Parse * h266parse, const guint8 * data,
   return complete;
 }
 
+static gboolean
+gst_h266_parse_nal_is_vcl (const GstH266NalUnit * nalu)
+{
+  return nalu->type <= GST_H266_NAL_SLICE_GDR;
+}
+
 static GstFlowReturn
 gst_h266_parse_handle_frame_packetized (GstBaseParse * parse,
     GstBaseParseFrame * frame)
@@ -1027,6 +1039,8 @@ gst_h266_parse_handle_frame_packetized (GstBaseParse * parse,
 
     /* either way, have a look at it */
     gst_h266_parse_process_nal (h266parse, &nalu);
+
+    h266parse->have_vcl_in_frame |= gst_h266_parse_nal_is_vcl (&nalu);
 
     /* dispatch per NALU if needed */
     if (h266parse->split_packetized) {
@@ -1214,6 +1228,8 @@ gst_h266_parse_handle_frame (GstBaseParse * parse,
           goto skip;
         }
         break;
+      case GST_H266_PARSER_BROKEN_DATA:
+        goto broken;
       case GST_H266_PARSER_NO_NAL:
         /* start code may have up to 4 bytes, and we may also get that return
          * value if only one of the two header bytes are present, make sure
@@ -1282,9 +1298,24 @@ gst_h266_parse_handle_frame (GstBaseParse * parse,
             ("Error parsing H.266 stream"), ("Invalid H.266 stream"));
         goto invalid_stream;
       case GST_H266_PARSER_NO_NAL:
-        GST_ELEMENT_ERROR (h266parse, STREAM, FORMAT,
-            ("Error parsing H.266 stream"), ("No H.266 NAL unit found"));
-        goto invalid_stream;
+        /* In NAL alignment, assume the NAL is broken */
+        if (h266parse->in_align == GST_H266_PARSE_ALIGN_NAL ||
+            h266parse->in_align == GST_H266_PARSE_ALIGN_AU) {
+          /* There is no start code between current_off and the end of the
+           * buffer. gst_h266_parser_identify_nalu() leaves nalu zeroed in
+           * that case, so it still describes the previous NAL (or nothing at
+           * all when this is the first iteration of a resumed parse). Make it
+           * describe the unparseable tail instead, so that "broken" below
+           * skips all of it at the start of a frame, or terminates the AU
+           * right after the last good NAL. Terminating at a stale sc_offset
+           * of 0 finishes a zero-sized frame, which leaves baseparse with a
+           * consumed frame->buffer leading to a crash. */
+          nalu.sc_offset = current_off;
+          nalu.offset = size;
+          nalu.size = 0;
+          goto broken;
+        }
+        goto more;
       case GST_H266_PARSER_BROKEN_DATA:
         GST_WARNING_OBJECT (h266parse, "input stream is corrupt; "
             "it contains a NAL unit of length %u", nalu.size);
@@ -1309,6 +1340,14 @@ gst_h266_parse_handle_frame (GstBaseParse * parse,
 
     GST_LOG_OBJECT (h266parse, "%p complete nal found. Off: %u, Size: %u",
         data, nalu.offset, nalu.size);
+
+    if (G_UNLIKELY (nalu.data[nalu.offset] & 0x80)) {
+      GST_WARNING_OBJECT (h266parse, "NAL has forbidden_zero_bit set");
+      /* Keep any complete NALs collected before this malformed one. */
+      goto broken;
+    }
+
+    h266parse->have_vcl_in_frame |= gst_h266_parse_nal_is_vcl (&nalu);
 
     if (gst_h266_parse_collect_nal (h266parse, data, size, &nalu)) {
       /* complete current frame, if it exist */
@@ -2286,7 +2325,18 @@ gst_h266_parse_update_src_caps (GstH266Parse * h266parse, GstCaps * caps)
         fps_den = sps->fps_den;
       }
 
-      if (interlaced_mode == GST_H266_PARSE_INTERLACED_ONLY) {
+      /* The timing information values are 32-bit unsigned in the bitstream,
+       * so they can exceed the range of the gint used for the framerate.
+       * Such values are not a valid framerate and the fraction maths has
+       * undefined behaviour for them; treat them as unknown. */
+      if (fps_num <= 0 || fps_den <= 0) {
+        if (fps_num != 0 || fps_den != 1) {
+          GST_INFO_OBJECT (h266parse, "Invalid framerate %d/%d from timing "
+              "information; using 0/1", fps_num, fps_den);
+        }
+        fps_num = 0;
+        fps_den = 1;
+      } else if (interlaced_mode == GST_H266_PARSE_INTERLACED_ONLY) {
         gint new_fps_num, new_fps_den;
 
         if (!gst_util_fraction_multiply (fps_num, fps_den, 1, 2, &new_fps_num,
@@ -3075,6 +3125,9 @@ gst_h266_parse_parse_frame (GstBaseParse * parse, GstBaseParseFrame * frame)
   buffer = frame->buffer;
 
   gst_h266_parse_update_src_caps (h266parse, NULL);
+
+  if (!h266parse->have_vcl_in_frame)
+    GST_BUFFER_DURATION (buffer) = 0;
 
   if (h266parse->keyframe)
     GST_BUFFER_FLAG_UNSET (buffer, GST_BUFFER_FLAG_DELTA_UNIT);
