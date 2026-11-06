@@ -374,6 +374,57 @@ GST_START_TEST (test_parse_normal)
 
 GST_END_TEST;
 
+GST_START_TEST (test_parse_reject_forbidden_nal_header)
+{
+  const guint8 bogus_subset_sps[] = {
+    0x00, 0x00, 0x00, 0x01, 0xaf, 0x49, 0x00, 0xf0,
+    0xae, 0x49, 0x00
+  };
+  guint8 au[sizeof (h264_sps) + sizeof (h264_pps) + sizeof (h264_idrframe)];
+  GstHarness *h = gst_harness_new ("h264parse");
+  GstCaps *caps;
+  const GstStructure *s;
+  gint width, height, new_width, new_height;
+
+  gst_harness_set_caps_str (h,
+      "video/x-h264,stream-format=byte-stream,alignment=au",
+      "video/x-h264,stream-format=byte-stream,alignment=au");
+
+  memcpy (au, h264_sps, sizeof (h264_sps));
+  memcpy (au + sizeof (h264_sps), h264_pps, sizeof (h264_pps));
+  memcpy (au + sizeof (h264_sps) + sizeof (h264_pps), h264_idrframe,
+      sizeof (h264_idrframe));
+  fail_unless_equals_int (gst_harness_push (h,
+          gst_buffer_new_memdup (au, sizeof (au))), GST_FLOW_OK);
+
+  caps = gst_pad_get_current_caps (h->sinkpad);
+  fail_unless (caps != NULL);
+  s = gst_caps_get_structure (caps, 0);
+  fail_unless (gst_structure_get_int (s, "width", &width));
+  fail_unless (gst_structure_get_int (s, "height", &height));
+  gst_caps_unref (caps);
+
+  fail_unless_equals_int (gst_harness_push (h,
+          gst_buffer_new_memdup (bogus_subset_sps,
+              sizeof (bogus_subset_sps))), GST_FLOW_OK);
+  fail_unless_equals_int (gst_harness_push (h,
+          gst_buffer_new_memdup (h264_idrframe,
+              sizeof (h264_idrframe))), GST_FLOW_OK);
+
+  caps = gst_pad_get_current_caps (h->sinkpad);
+  fail_unless (caps != NULL);
+  s = gst_caps_get_structure (caps, 0);
+  fail_unless (gst_structure_get_int (s, "width", &new_width));
+  fail_unless (gst_structure_get_int (s, "height", &new_height));
+  fail_unless_equals_int (width, new_width);
+  fail_unless_equals_int (height, new_height);
+  gst_caps_unref (caps);
+
+  gst_harness_teardown (h);
+}
+
+GST_END_TEST;
+
 
 GST_START_TEST (test_parse_drain_single)
 {
@@ -700,6 +751,8 @@ h264parse_suite (void)
 
   suite_add_tcase (s, tc_chain);
   tcase_add_test (tc_chain, test_parse_normal);
+  if (ctx_sink_template == &sinktemplate_bs_au)
+    tcase_add_test (tc_chain, test_parse_reject_forbidden_nal_header);
   tcase_add_test (tc_chain, test_parse_drain_single);
   tcase_add_test (tc_chain, test_parse_drain_garbage);
   tcase_add_test (tc_chain, test_parse_split);
@@ -1200,6 +1253,57 @@ h264parse_sliced_suite (void)
 }
 
 
+GST_START_TEST (test_parse_forbidden_nal_progress)
+{
+  static const guint8 forbidden[] = { 0x00, 0x00, 0x00, 0x01, 0xb2, 0x05 };
+  GstHarness *h = gst_harness_new ("h264parse");
+  GstBuffer *buf;
+  guint pictures = 0;
+
+  gst_harness_set_caps_str (h,
+      (__i__ & 1) ? "video/x-h264, stream-format=byte-stream" :
+      "video/x-h264, stream-format=byte-stream, alignment=au",
+      "video/x-h264, stream-format=byte-stream, alignment=au");
+
+  buf = composite_buffer (0, 0, 4,
+      h264_aud, sizeof (h264_aud),
+      h264_slicing_sps, sizeof (h264_slicing_sps),
+      h264_slicing_pps, sizeof (h264_slicing_pps),
+      h264_idr_slice_1, sizeof (h264_idr_slice_1));
+  fail_unless_equals_int (gst_harness_push (h, buf), GST_FLOW_OK);
+
+  /* Exercise a forbidden NAL both at the start of a buffer and after an AUD. */
+  if (__i__ & 2)
+    buf = composite_buffer (GST_SECOND, 0, 2,
+        h264_aud, sizeof (h264_aud), forbidden, sizeof (forbidden));
+  else
+    buf = composite_buffer (GST_SECOND, 0, 1, forbidden, sizeof (forbidden));
+  fail_unless_equals_int (gst_harness_push (h, buf), GST_FLOW_OK);
+
+  buf = composite_buffer (2 * GST_SECOND, 0, 2,
+      h264_aud, sizeof (h264_aud), h264_idr_slice_1, sizeof (h264_idr_slice_1));
+  fail_unless_equals_int (gst_harness_push (h, buf), GST_FLOW_OK);
+  /* A following start code completes the delimiter in unaligned input. */
+  buf = composite_buffer (3 * GST_SECOND, 0, 2,
+      h264_aud, sizeof (h264_aud), h264_aud, sizeof (h264_aud));
+  fail_unless_equals_int (gst_harness_push (h, buf), GST_FLOW_OK);
+
+  /* Both pictures must arrive before EOS, rather than waiting behind metadata. */
+  while ((buf = gst_harness_try_pull (h))) {
+    gsize size = gst_buffer_get_size (buf);
+
+    if (size >= sizeof (h264_idr_slice_1) &&
+        gst_buffer_memcmp (buf, size - sizeof (h264_idr_slice_1),
+            h264_idr_slice_1, sizeof (h264_idr_slice_1)) == 0)
+      pictures++;
+    gst_buffer_unref (buf);
+  }
+  fail_unless_equals_int (pictures, 2);
+  gst_harness_teardown (h);
+}
+
+GST_END_TEST;
+
 GST_START_TEST (test_parse_sei_closedcaptions)
 {
   GstVideoCaptionMeta *cc;
@@ -1696,6 +1800,127 @@ GST_START_TEST (test_packetized_avc_drop_corrupt)
 
 GST_END_TEST;
 
+/* Some cameras (seen with ACTi) append a metadata trailer to every slice
+ * NAL. It starts with an MPEG start code and, depending on the counter it
+ * carries, can contain a real 4-byte start code as well:
+ *
+ *   00 00 01 b2 05 00 00 00 01 4a 00 00 46 ... 00 00 00 00
+ *
+ * In AU alignment the parser ends the AU at the first bogus start code and
+ * the trailer becomes the next frame: "b2 05" is collected, "4a" is a
+ * 1-byte NAL, and the rest holds no start code at all. That NO_NAL result
+ * used to finish a zero-sized frame and crash baseparse. */
+static const guint8 h264_acti_trailer[] = {
+  0x00, 0x00, 0x01, 0xb2, 0x05, 0x00, 0x00, 0x00, 0x01, 0x4a, 0x00, 0x00,
+  0x46, 0xc5, 0xea, 0x64, 0x0c, 0x01, 0x00, 0x03, 0xd3, 0x0a, 0x04, 0x00,
+  0x45, 0x12, 0x00, 0x1e, 0x46, 0xc5, 0xea, 0x64, 0x8a, 0x4f, 0x0a, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+};
+
+GST_START_TEST (test_parse_bytestream_junk_after_au)
+{
+  GstHarness *h;
+  GstBuffer *buf;
+  gsize au_size;
+
+  h = gst_harness_new ("h264parse");
+  gst_harness_set_caps_str (h,
+      "video/x-h264, stream-format=byte-stream, alignment=au",
+      "video/x-h264, stream-format=byte-stream, alignment=au");
+
+  /* One AU (SPS, PPS, IDR) followed by the trailer, as a depayloader in AU
+   * alignment would deliver it */
+  au_size = sizeof (h264_sps) + sizeof (h264_pps) + sizeof (h264_idrframe);
+  buf = composite_buffer (100, 0, 4, h264_sps, sizeof (h264_sps),
+      h264_pps, sizeof (h264_pps), h264_idrframe, sizeof (h264_idrframe),
+      h264_acti_trailer, sizeof (h264_acti_trailer));
+  fail_unless_equals_int (gst_harness_push (h, buf), GST_FLOW_OK);
+
+  /* Draining what is left of the trailer must not crash either */
+  fail_unless (gst_harness_push_event (h, gst_event_new_eos ()));
+
+  /* The real AU comes out intact (with the AUD the parser inserts in AU
+   * alignment), before anything made of the trailer */
+  fail_unless (gst_harness_buffers_in_queue (h) >= 1);
+  buf = gst_harness_pull (h);
+  fail_unless_equals_int (gst_buffer_get_size (buf),
+      sizeof (h264_aud) + au_size);
+  fail_unless (gst_buffer_memcmp (buf, 0, h264_aud, sizeof (h264_aud)) == 0);
+  fail_unless (gst_buffer_memcmp (buf, sizeof (h264_aud), h264_sps,
+          sizeof (h264_sps)) == 0);
+  fail_unless (gst_buffer_memcmp (buf, sizeof (h264_aud) + sizeof (h264_sps),
+          h264_pps, sizeof (h264_pps)) == 0);
+  fail_unless (gst_buffer_memcmp (buf,
+          sizeof (h264_aud) + sizeof (h264_sps) + sizeof (h264_pps),
+          h264_idrframe, sizeof (h264_idrframe)) == 0);
+  gst_buffer_unref (buf);
+
+  gst_harness_teardown (h);
+}
+
+GST_END_TEST;
+
+GST_START_TEST (test_non_vcl_nal_duration)
+{
+  GstCaps *in_caps, *out_caps;
+  GstBuffer *buf_in, *buf_out;
+  GstClockTime expected_duration;
+  GstHarness *h = gst_harness_new ("h264parse");
+  const GstClockTime fake_duration = 12345 * GST_MSECOND;
+
+  const gchar *in_caps_str =
+      "video/x-h264, alignment=(string)nal, framerate=30/1";
+  const gchar *out_caps_str = "video/x-h264, alignment=(string)nal";
+
+  in_caps = gst_caps_from_string (in_caps_str);
+  out_caps = gst_caps_from_string (out_caps_str);
+  gst_harness_set_caps (h, in_caps, out_caps);
+
+  /* Push SPS, PPS with an arbitrary non-zero duration */
+  buf_in = wrap_buffer (h264_sps, sizeof (h264_sps), 0, 0);
+  GST_BUFFER_DURATION (buf_in) = fake_duration;
+  fail_unless_equals_int (gst_harness_push (h, buf_in), GST_FLOW_OK);
+
+  buf_in = wrap_buffer (h264_pps, sizeof (h264_pps), 0, 0);
+  GST_BUFFER_DURATION (buf_in) = fake_duration;
+  fail_unless_equals_int (gst_harness_push (h, buf_in), GST_FLOW_OK);
+
+  /* Push an IDR slice (VCL) to complete the AU */
+  buf_in = wrap_buffer (h264_idrframe, sizeof (h264_idrframe), 0, 0);
+  fail_unless_equals_int (gst_harness_push (h, buf_in), GST_FLOW_OK);
+
+  /* With framerate=30/1, a VCL frame should get duration = 1/30 s */
+  expected_duration = gst_util_uint64_scale (GST_SECOND, 1, 30);
+
+  /* First AU produces: AUD + SPS + PPS + slice = 4 buffers
+   * (h264parse inserts an AUD at the start of each AU) */
+  fail_unless_equals_int (gst_harness_buffers_in_queue (h), 4);
+
+  /* AUD - non-VCL, must have duration=0 */
+  buf_out = gst_harness_pull (h);
+  fail_unless_equals_clocktime (GST_BUFFER_DURATION (buf_out), 0);
+  gst_buffer_unref (buf_out);
+
+  /* SPS - non-VCL, must have duration=0 */
+  buf_out = gst_harness_pull (h);
+  fail_unless_equals_clocktime (GST_BUFFER_DURATION (buf_out), 0);
+  gst_buffer_unref (buf_out);
+
+  /* PPS - non-VCL, must have duration=0 */
+  buf_out = gst_harness_pull (h);
+  fail_unless_equals_clocktime (GST_BUFFER_DURATION (buf_out), 0);
+  gst_buffer_unref (buf_out);
+
+  /* IDR slice - VCL, must have the fps-based duration */
+  buf_out = gst_harness_pull (h);
+  fail_unless_equals_clocktime (GST_BUFFER_DURATION (buf_out),
+      expected_duration);
+  gst_buffer_unref (buf_out);
+
+  gst_harness_teardown (h);
+}
+
+GST_END_TEST;
 
 /*
  * TODO:
@@ -1805,6 +2030,7 @@ main (int argc, char **argv)
 
     s = suite_create ("h264parse");
     suite_add_tcase (s, tc_chain);
+    tcase_add_loop_test (tc_chain, test_parse_forbidden_nal_progress, 0, 4);
     tcase_add_test (tc_chain, test_parse_sei_closedcaptions);
     tcase_add_test (tc_chain, test_parse_compatible_caps);
     tcase_add_test (tc_chain, test_parse_skip_to_4bytes_sc);
@@ -1812,6 +2038,8 @@ main (int argc, char **argv)
     tcase_add_test (tc_chain, test_parse_sei_userdefinedunregistered);
     tcase_add_test (tc_chain, test_parse_to_avc3_without_sps);
     tcase_add_test (tc_chain, test_packetized_avc_drop_corrupt);
+    tcase_add_test (tc_chain, test_parse_bytestream_junk_after_au);
+    tcase_add_test (tc_chain, test_non_vcl_nal_duration);
     nf += gst_check_run_suite (s, "h264parse", __FILE__);
   }
 

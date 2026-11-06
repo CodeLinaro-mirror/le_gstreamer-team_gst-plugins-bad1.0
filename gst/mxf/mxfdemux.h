@@ -112,6 +112,9 @@ struct _GstMXFDemuxEssenceTrack
    * Special values:
    * * -1 Not discovered yet
    * * -2 Ignore delta entry (if index table is not present or not complete)
+   *
+   * Values >= 0 are an index into the delta entries of the segment it was
+   * resolved from, which has to be checked before using it with another one.
    */
   gint32 delta_id;
 
@@ -176,6 +179,9 @@ typedef struct
 
   /* Delta entry to which reordering should be applied (-1 == no reordering) */
   gint reordered_delta_entry;
+
+  /* Delta entries were dropped because the segments use different tables */
+  gboolean delta_entries_inconsistent;
 
   /* Array of gint8 reverse temporal offsets.
    * Contains the shift to apply to an entry DTS to get the PTS

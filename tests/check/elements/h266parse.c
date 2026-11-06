@@ -1177,6 +1177,76 @@ GST_START_TEST (test_parse_skip_to_4bytes_sc)
 
 GST_END_TEST;
 
+GST_START_TEST (test_parse_reject_forbidden_nal_header)
+{
+  GstHarness *h = gst_harness_new ("h266parse");
+  guint8 bad_sps[sizeof (h266_sps)];
+  GstBuffer *buf;
+  GstMapInfo map;
+  guint count = 0;
+  gboolean seen_idr = FALSE;
+
+  memcpy (bad_sps, h266_sps, sizeof (bad_sps));
+  bad_sps[4] |= 0x80;
+
+  gst_harness_set_caps_str (h,
+      "video/x-h266,stream-format=byte-stream,alignment=nal",
+      "video/x-h266,stream-format=byte-stream,alignment=nal");
+  buf = composite_buffer (100, 0, 6, h266_vps, sizeof (h266_vps),
+      h266_sps, sizeof (h266_sps), h266_pps, sizeof (h266_pps),
+      h266_prefix_aps, sizeof (h266_prefix_aps), bad_sps, sizeof (bad_sps),
+      h266_idr, sizeof (h266_idr));
+  fail_unless_equals_int (gst_harness_push (h, buf), GST_FLOW_OK);
+  gst_harness_push_event (h, gst_event_new_eos ());
+
+  while (gst_harness_buffers_in_queue (h)) {
+    buf = gst_harness_pull (h);
+    fail_unless (gst_buffer_map (buf, &map, GST_MAP_READ));
+    fail_unless (map.size >= 6);
+    fail_unless_equals_int (map.data[4] & 0x80, 0);
+    if (map.data[4] == h266_idr[4] && map.data[5] == h266_idr[5])
+      seen_idr = TRUE;
+    gst_buffer_unmap (buf, &map);
+    gst_buffer_unref (buf);
+    count++;
+  }
+  fail_unless (count >= 4);
+  fail_unless (seen_idr);
+
+  gst_harness_teardown (h);
+}
+
+GST_END_TEST;
+
+GST_START_TEST (test_parse_preserve_au_before_forbidden_nal)
+{
+  GstHarness *h = gst_harness_new ("h266parse");
+  guint8 bad_sps[sizeof (h266_sps)];
+  GstBuffer *buf;
+
+  memcpy (bad_sps, h266_sps, sizeof (bad_sps));
+  bad_sps[4] |= 0x80;
+
+  gst_harness_set_caps_str (h,
+      "video/x-h266,stream-format=byte-stream,alignment=au",
+      "video/x-h266,stream-format=byte-stream,alignment=au");
+  buf = composite_buffer (100, 0, 6, h266_vps, sizeof (h266_vps),
+      h266_sps, sizeof (h266_sps), h266_pps, sizeof (h266_pps),
+      h266_prefix_aps, sizeof (h266_prefix_aps), h266_idr, sizeof (h266_idr),
+      bad_sps, sizeof (bad_sps));
+  fail_unless_equals_int (gst_harness_push (h, buf), GST_FLOW_OK);
+  fail_unless (gst_harness_push_event (h, gst_event_new_eos ()));
+
+  fail_unless (gst_harness_buffers_in_queue (h) >= 1);
+  pull_and_check_composite (h, 100, 0, 5, h266_vps, sizeof (h266_vps),
+      h266_sps, sizeof (h266_sps), h266_pps, sizeof (h266_pps),
+      h266_prefix_aps, sizeof (h266_prefix_aps), h266_idr, sizeof (h266_idr));
+
+  gst_harness_teardown (h);
+}
+
+GST_END_TEST;
+
 GST_START_TEST (test_parse_sc_with_half_nal)
 {
   GstHarness *h;
@@ -1336,6 +1406,326 @@ GST_START_TEST (test_packetized_vvc1_drop_corrupt)
 
 GST_END_TEST;
 
+
+GST_START_TEST (test_sps_invalid_framerate)
+{
+  GstHarness *h;
+  GstBuffer *buf;
+  GstEvent *event;
+  gboolean seen = FALSE;
+  /* SPS with general timing HRD parameters time_scale = 0x80000000 and
+   * num_units_in_tick = 0xFFFFFFFF and field_seq_flag = 1. The timing
+   * values do not fit the gint framerate and used to trigger undefined
+   * behaviour (G_MININT % -1 inside gst_util_greatest_common_divisor)
+   * in the field-rate calculation. */
+  const guint8 bytestream[] = {
+    0x00, 0x00, 0x01, 0x00, 0x79, 0x00, 0x09, 0x02, 0x40, 0x00, 0x00, 0x00,
+    0x40, 0x80, 0x81, 0x18, 0x00, 0x55, 0x6c, 0x3e, 0x03, 0x01, 0x04, 0x30,
+    0x1f, 0xff, 0xff, 0xff, 0xf8, 0x00, 0x00, 0x00, 0x0a, 0x00, 0xfa, 0x40,
+  };
+
+  h = gst_harness_new_parse ("h266parse");
+  gst_harness_set_src_caps_str (h, "video/x-h266");
+
+  buf = gst_buffer_new_and_alloc (sizeof (bytestream));
+  gst_buffer_fill (buf, 0, bytestream, sizeof (bytestream));
+  fail_unless_equals_int (gst_harness_push (h, buf), GST_FLOW_OK);
+
+  gst_harness_push_event (h, gst_event_new_eos ());
+
+  while ((event = gst_harness_pull_event (h)) != NULL) {
+    GstCaps *caps;
+    const GstStructure *s;
+    gint n = 0, d = 1;
+
+    if (GST_EVENT_TYPE (event) != GST_EVENT_CAPS) {
+      gst_event_unref (event);
+      continue;
+    }
+
+    seen = TRUE;
+    gst_event_parse_caps (event, &caps);
+    s = gst_caps_get_structure (caps, 0);
+    if (gst_structure_get_fraction (s, "framerate", &n, &d))
+      fail_unless (n >= 0 && d > 0);
+
+    gst_event_unref (event);
+    break;
+  }
+  fail_unless (seen);
+
+  gst_harness_teardown (h);
+}
+
+GST_END_TEST;
+
+GST_START_TEST (test_sps_hrd_framerate)
+{
+  GstHarness *h;
+  GstBuffer *buf;
+  GstEvent *event;
+  /* Same SPS as test_sps_invalid_framerate but with time_scale = 30000
+   * and num_units_in_tick = 1000, i.e. a 30 Hz field rate halved to a
+   * 15 Hz frame rate. */
+  const guint8 bytestream[] = {
+    0x00, 0x00, 0x01, 0x00, 0x79, 0x00, 0x09, 0x02, 0x40, 0x00, 0x00, 0x03,
+    0x00, 0x40, 0x80, 0x81, 0x18, 0x00, 0x55, 0x6c, 0x3e, 0x03, 0x01, 0x04,
+    0x30, 0x10, 0x00, 0x00, 0x3e, 0x80, 0x00, 0x07, 0x53, 0x0a, 0x00, 0xfa,
+    0x40
+  };
+  gboolean seen = FALSE;
+
+  h = gst_harness_new_parse ("h266parse");
+  gst_harness_set_src_caps_str (h, "video/x-h266");
+
+  buf = gst_buffer_new_and_alloc (sizeof (bytestream));
+  gst_buffer_fill (buf, 0, bytestream, sizeof (bytestream));
+  fail_unless_equals_int (gst_harness_push (h, buf), GST_FLOW_OK);
+
+  gst_harness_push_event (h, gst_event_new_eos ());
+
+  while ((event = gst_harness_pull_event (h)) != NULL) {
+    GstCaps *caps;
+    const GstStructure *s;
+    gint n = 0, d = 1;
+
+    if (GST_EVENT_TYPE (event) != GST_EVENT_CAPS) {
+      gst_event_unref (event);
+      continue;
+    }
+
+    gst_event_parse_caps (event, &caps);
+    s = gst_caps_get_structure (caps, 0);
+    if (gst_structure_get_fraction (s, "framerate", &n, &d)) {
+      fail_unless_equals_int (n, 15);
+      fail_unless_equals_int (d, 1);
+      seen = TRUE;
+    }
+
+    gst_event_unref (event);
+    break;
+  }
+
+  fail_unless (seen);
+
+  gst_harness_teardown (h);
+}
+
+GST_END_TEST;
+
+GST_START_TEST (test_chroma_qp_table_bitdepth)
+{
+  GstHarness *h;
+  GstBuffer *buf;
+  /* SPS with bitdepth_minus8 = 8. Generating the chroma QP table used
+   * to write one entry past the end of the 111-entry table. */
+  const guint8 bytestream[] = {
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x79, 0x00, 0x0d, 0x02, 0x00, 0x80, 0x00,
+    0x40, 0x20, 0x40, 0x40, 0xd9, 0x3f, 0x09, 0x1b, 0xa4, 0xba, 0x21, 0x1a,
+    0x21, 0x49, 0x91, 0xb8, 0x4d, 0x4d, 0x8a, 0x31, 0x03, 0x50, 0xc1, 0xbe,
+    0x15, 0x71, 0xfc, 0x1f, 0x8c, 0x40, 0x80
+  };
+
+  h = gst_harness_new_parse ("h266parse");
+  gst_harness_set_src_caps_str (h, "video/x-h266");
+
+  buf = gst_buffer_new_and_alloc (sizeof (bytestream));
+  gst_buffer_fill (buf, 0, bytestream, sizeof (bytestream));
+  fail_unless_equals_int (gst_harness_push (h, buf), GST_FLOW_OK);
+
+  gst_harness_push_event (h, gst_event_new_eos ());
+
+  gst_harness_teardown (h);
+}
+
+GST_END_TEST;
+
+GST_START_TEST (test_sh_num_tiles_in_slice)
+{
+  GstHarness *h;
+  GstBuffer *buf;
+  /* Slice header of a picture with non-rectangular slices where
+   * num_tiles_in_slice_minus1 extends past the last tile of the
+   * picture. The tile index used to index past the PPS tile row
+   * array. */
+  const guint8 bytestream[] = {
+    0x00, 0x00, 0x01, 0x00, 0x79, 0x00, 0x11, 0x02, 0x40, 0x00, 0x00, 0x03,
+    0x01, 0x08, 0x00, 0x37, 0x01, 0x18, 0x00, 0x55, 0x6c, 0x3e, 0x03, 0x01,
+    0x04, 0x30, 0x10, 0x00, 0x00, 0x01, 0x00, 0x81, 0x00, 0x00, 0x84, 0x00,
+    0x1b, 0x80, 0x80, 0xaf, 0x18, 0x44, 0x88, 0x00, 0x00, 0x01, 0x00, 0x99,
+    0xf0, 0x00, 0x00, 0x01, 0x00, 0x01, 0x6d, 0x80, 0x37, 0x10,
+  };
+
+  h = gst_harness_new_parse ("h266parse");
+  gst_harness_set_src_caps_str (h, "video/x-h266");
+
+  buf = gst_buffer_new_and_alloc (sizeof (bytestream));
+  gst_buffer_fill (buf, 0, bytestream, sizeof (bytestream));
+  fail_unless_equals_int (gst_harness_push (h, buf), GST_FLOW_OK);
+
+  gst_harness_push_event (h, gst_event_new_eos ());
+
+  gst_harness_teardown (h);
+}
+
+GST_END_TEST;
+
+
+GST_START_TEST (test_sps_hrd_truncated)
+{
+  GstHarness *h;
+  GstBuffer *buf;
+  /* SPS with timing/HRD parameters where emulation prevention bytes
+   * consume the remaining data while a 32-bit field is being filled.
+   * The failed read used to leave the bit reader with a partially
+   * filled cache, and the next read shifted by a negative amount. */
+  const guint8 bytestream[] = {
+    0x00, 0x00, 0x01, 0x00, 0x79, 0x00, 0x8d, 0x02, 0x43, 0x80, 0x00, 0x00,
+    0xc0, 0x07, 0x81, 0x00, 0x21, 0xc8, 0xd4, 0x00, 0xc5, 0xff, 0xff, 0x1f,
+    0x7c, 0xdd, 0x59, 0xe9, 0x7b, 0xff, 0xfb, 0xfe, 0x00, 0x00, 0x03, 0x00,
+    0x04, 0x20,
+  };
+
+  h = gst_harness_new_parse ("h266parse");
+  gst_harness_set_src_caps_str (h, "video/x-h266");
+
+  buf = gst_buffer_new_and_alloc (sizeof (bytestream));
+  gst_buffer_fill (buf, 0, bytestream, sizeof (bytestream));
+  fail_unless_equals_int (gst_harness_push (h, buf), GST_FLOW_OK);
+
+  gst_harness_push_event (h, gst_event_new_eos ());
+
+  gst_harness_teardown (h);
+}
+
+GST_END_TEST;
+
+GST_START_TEST (test_ref_pic_lists_ltrp_count)
+{
+  GstHarness *h;
+  GstBuffer *buf;
+  /* Slice header ref_pic_lists where the long term reference pictures
+   * signalled in the header do not match the count from the referenced
+   * list. The mismatch used to hit an assertion. */
+  const guint8 bytestream[] = {
+    0x00, 0x00, 0x01, 0x00, 0x79, 0x00, 0x11, 0x02, 0x40, 0x00, 0x00, 0x03,
+    0x01, 0x08, 0x00, 0x37, 0x01, 0x18, 0x00, 0x55, 0x6c, 0x3e, 0x03, 0x01,
+    0x04, 0x30, 0x10, 0x00, 0x00, 0x01, 0x00, 0x81, 0x00, 0x00, 0x84, 0x00,
+    0x1b, 0x80, 0x80, 0xaf, 0x18, 0x03, 0x00, 0x74, 0x00, 0x00, 0x01, 0x00,
+    0x99, 0x10, 0x00, 0x00, 0x01, 0x42, 0x01, 0x01, 0x01, 0x80, 0x80, 0x00,
+    0x80,
+  };
+
+  h = gst_harness_new_parse ("h266parse");
+  gst_harness_set_src_caps_str (h, "video/x-h266");
+
+  buf = gst_buffer_new_and_alloc (sizeof (bytestream));
+  gst_buffer_fill (buf, 0, bytestream, sizeof (bytestream));
+  fail_unless_equals_int (gst_harness_push (h, buf), GST_FLOW_OK);
+
+  gst_harness_push_event (h, gst_event_new_eos ());
+
+  gst_harness_teardown (h);
+}
+
+GST_END_TEST;
+
+GST_START_TEST (test_slice_without_vps)
+{
+  GstHarness *h;
+  GstBuffer *buf;
+  /* Slice header referencing an SPS that was parsed without a VPS.
+   * gst_h266_parser_set_active_sps_pps() asserted that the SPS has a
+   * VPS instead of failing the slice header parse. */
+  const guint8 bytestream[] = {
+    0x00, 0x00, 0x01, 0x00, 0x79, 0x00, 0x11, 0x02, 0x40, 0x00, 0x00, 0x03,
+    0x01, 0x08, 0x00, 0x37, 0x01, 0x18, 0x00, 0x55, 0x6c, 0x3e, 0x03, 0x01,
+    0x04, 0x30, 0x10, 0x00, 0x00, 0x01, 0x00, 0x81, 0x00, 0x00, 0x84, 0x00,
+    0x1b, 0x80, 0x80, 0xaf, 0x18, 0x44, 0x88, 0x00, 0x00, 0x01, 0x10, 0x79,
+    0x02, 0x09, 0x02, 0x40, 0x00, 0x00, 0x00, 0x40, 0x80, 0x81, 0x18, 0x00,
+    0x55, 0x6c, 0x3e, 0x80, 0x6c, 0x18, 0x55, 0x00, 0x81, 0x00, 0x00, 0x01,
+    0x00, 0x01, 0x80,
+  };
+
+  h = gst_harness_new_parse ("h266parse");
+  gst_harness_set_src_caps_str (h, "video/x-h266");
+
+  buf = gst_buffer_new_and_alloc (sizeof (bytestream));
+  gst_buffer_fill (buf, 0, bytestream, sizeof (bytestream));
+  fail_unless_equals_int (gst_harness_push (h, buf), GST_FLOW_OK);
+
+  gst_harness_push_event (h, gst_event_new_eos ());
+
+  gst_harness_teardown (h);
+}
+
+GST_END_TEST;
+
+GST_START_TEST (test_non_vcl_nal_duration)
+{
+  GstCaps *in_caps, *out_caps;
+  GstBuffer *buf_in, *buf_out;
+  GstClockTime expected_duration;
+  GstHarness *h = gst_harness_new ("h266parse");
+  const GstClockTime fake_duration = 12345 * GST_MSECOND;
+
+  const gchar *in_caps_str =
+      "video/x-h266, alignment=(string)nal, framerate=30/1";
+  const gchar *out_caps_str = "video/x-h266, alignment=(string)nal";
+
+  in_caps = gst_caps_from_string (in_caps_str);
+  out_caps = gst_caps_from_string (out_caps_str);
+  gst_harness_set_caps (h, in_caps, out_caps);
+
+  /* Push VPS, SPS, PPS with an arbitrary non-zero duration */
+  buf_in = wrap_buffer (h266_vps, sizeof (h266_vps), 0, 0);
+  GST_BUFFER_DURATION (buf_in) = fake_duration;
+  fail_unless_equals_int (gst_harness_push (h, buf_in), GST_FLOW_OK);
+
+  buf_in = wrap_buffer (h266_sps, sizeof (h266_sps), 0, 0);
+  GST_BUFFER_DURATION (buf_in) = fake_duration;
+  fail_unless_equals_int (gst_harness_push (h, buf_in), GST_FLOW_OK);
+
+  buf_in = wrap_buffer (h266_pps, sizeof (h266_pps), 0, 0);
+  GST_BUFFER_DURATION (buf_in) = fake_duration;
+  fail_unless_equals_int (gst_harness_push (h, buf_in), GST_FLOW_OK);
+
+  /* Push an IDR slice (VCL) to complete the AU */
+  buf_in = wrap_buffer (h266_idr, sizeof (h266_idr), 0, 0);
+  fail_unless_equals_int (gst_harness_push (h, buf_in), GST_FLOW_OK);
+
+  /* With framerate=30/1, a VCL frame should get duration = 1/30 s */
+  expected_duration = gst_util_uint64_scale (GST_SECOND, 1, 30);
+
+  /* First AU produces: VPS + SPS + PPS + slice = 4 buffers */
+  fail_unless_equals_int (gst_harness_buffers_in_queue (h), 4);
+
+  /* VPS - non-VCL, must have duration=0 */
+  buf_out = gst_harness_pull (h);
+  fail_unless_equals_clocktime (GST_BUFFER_DURATION (buf_out), 0);
+  gst_buffer_unref (buf_out);
+
+  /* SPS - non-VCL, must have duration=0 */
+  buf_out = gst_harness_pull (h);
+  fail_unless_equals_clocktime (GST_BUFFER_DURATION (buf_out), 0);
+  gst_buffer_unref (buf_out);
+
+  /* PPS - non-VCL, must have duration=0 */
+  buf_out = gst_harness_pull (h);
+  fail_unless_equals_clocktime (GST_BUFFER_DURATION (buf_out), 0);
+  gst_buffer_unref (buf_out);
+
+  /* IDR slice - VCL, must have the fps-based duration */
+  buf_out = gst_harness_pull (h);
+  fail_unless_equals_clocktime (GST_BUFFER_DURATION (buf_out),
+      expected_duration);
+  gst_buffer_unref (buf_out);
+
+  gst_harness_teardown (h);
+}
+
+GST_END_TEST;
+
 static Suite *
 h266parse_harnessed_suite (void)
 {
@@ -1363,6 +1753,8 @@ h266parse_harnessed_suite (void)
   tcase_add_test (tc_chain, test_discont_au_au);
 
   tcase_add_test (tc_chain, test_parse_skip_to_4bytes_sc);
+  tcase_add_test (tc_chain, test_parse_reject_forbidden_nal_header);
+  tcase_add_test (tc_chain, test_parse_preserve_au_before_forbidden_nal);
   tcase_add_test (tc_chain, test_parse_sc_with_half_nal);
 
   tcase_add_test (tc_chain, test_transform_bytestream_vvc1);
@@ -1375,6 +1767,20 @@ h266parse_harnessed_suite (void)
   tcase_add_test (tc_chain, test_drain);
 
   tcase_add_test (tc_chain, test_packetized_vvc1_drop_corrupt);
+
+  tcase_add_test (tc_chain, test_sps_invalid_framerate);
+  tcase_add_test (tc_chain, test_sps_hrd_framerate);
+  tcase_add_test (tc_chain, test_chroma_qp_table_bitdepth);
+
+  tcase_add_test (tc_chain, test_sh_num_tiles_in_slice);
+
+  tcase_add_test (tc_chain, test_sps_hrd_truncated);
+
+  tcase_add_test (tc_chain, test_ref_pic_lists_ltrp_count);
+
+  tcase_add_test (tc_chain, test_slice_without_vps);
+
+  tcase_add_test (tc_chain, test_non_vcl_nal_duration);
 
   return s;
 }

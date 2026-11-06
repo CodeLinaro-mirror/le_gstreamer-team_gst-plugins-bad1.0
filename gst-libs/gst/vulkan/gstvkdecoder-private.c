@@ -493,6 +493,31 @@ gst_vulkan_decoder_flush (GstVulkanDecoder * self, GError ** error)
   return ret;
 }
 
+static gboolean
+dpb_caps_is_equal (const GstCaps * a, const GstCaps * b)
+{
+  const GstStructure *sa, *sb;
+  const gchar *afmt, *bfmt;
+  gint aw, ah, bw, bh;
+
+  if (gst_caps_get_size (a) != 1 || gst_caps_get_size (b) != 1)
+    return FALSE;
+
+  sa = gst_caps_get_structure (a, 0);
+  sb = gst_caps_get_structure (b, 0);
+
+  if (!gst_structure_get_int (sa, "width", &aw)
+      || !gst_structure_get_int (sa, "height", &ah)
+      || !gst_structure_get_int (sb, "width", &bw)
+      || !gst_structure_get_int (sb, "height", &bh))
+    return FALSE;
+
+  afmt = gst_structure_get_string (sa, "format");
+  bfmt = gst_structure_get_string (sb, "format");
+
+  return aw == bw && ah == bh && g_strcmp0 (afmt, bfmt) == 0;
+}
+
 /**
  * gst_vulkan_decoder_create_dpb_pool:
  * @self: a #GstVulkanDecoder
@@ -517,8 +542,10 @@ gst_vulkan_decoder_create_dpb_pool (GstVulkanDecoder * self, GstCaps * caps)
 
   priv = gst_vulkan_decoder_get_instance_private (self);
 
-  if (!priv->started)
+  if (!priv->started) {
+    GST_ERROR_OBJECT (self, "Decoder not started");
     return FALSE;
+  }
 
   if (!self->dedicated_dpb)
     return TRUE;
@@ -536,7 +563,7 @@ gst_vulkan_decoder_create_dpb_pool (GstVulkanDecoder * self, GstCaps * caps)
 
     config = gst_buffer_pool_get_config (priv->dpb_pool);
     gst_buffer_pool_config_get_params (config, &old_caps, NULL, NULL, NULL);
-    keep_pool = gst_caps_is_strictly_equal (caps, old_caps);
+    keep_pool = old_caps != NULL && dpb_caps_is_equal (caps, old_caps);
     gst_structure_free (config);
 
     if (keep_pool) {
@@ -564,16 +591,25 @@ gst_vulkan_decoder_create_dpb_pool (GstVulkanDecoder * self, GstCaps * caps)
   gst_vulkan_image_buffer_pool_config_set_decode_caps (config,
       priv->profile_caps);
 
-  if (!gst_buffer_pool_set_config (priv->dpb_pool, config))
+  if (!gst_buffer_pool_set_config (priv->dpb_pool, config)) {
+    GST_ERROR_OBJECT (self, "Failed to set config on DPB pool");
     goto bail;
-  if (!gst_buffer_pool_set_active (priv->dpb_pool, TRUE))
+  }
+  if (!gst_buffer_pool_set_active (priv->dpb_pool, TRUE)) {
+    GST_ERROR_OBJECT (self, "Failed to activate DPB pool");
     goto bail;
+  }
 
   if (self->layered_dpb) {
+    gst_clear_buffer (&self->layered_buffer);
+
     ret = gst_buffer_pool_acquire_buffer (priv->dpb_pool, &self->layered_buffer,
         NULL);
-    if (ret != GST_FLOW_OK)
+    if (ret != GST_FLOW_OK) {
+      GST_ERROR_OBJECT (self, "Failed to acquire layered DPB buffer (%s)",
+          gst_flow_get_name (ret));
       goto bail;
+    }
   }
 
   return TRUE;

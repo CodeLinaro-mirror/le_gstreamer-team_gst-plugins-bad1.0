@@ -275,8 +275,7 @@ gst_vulkan_av1_decoder_stop (GstVideoDecoder * decoder)
   if (self->decoder)
     gst_vulkan_decoder_stop (self->decoder);
 
-  if (self->output_state)
-    gst_video_codec_state_unref (self->output_state);
+  g_clear_pointer (&self->output_state, gst_video_codec_state_unref);
 
   return GST_VIDEO_DECODER_CLASS (parent_class)->stop (decoder);
 }
@@ -397,7 +396,7 @@ gst_vulkan_av1_decoder_decide_allocation (GstVideoDecoder * decoder,
   else
     gst_query_add_allocation_pool (query, pool, size, min, max);
 
-  gst_object_unref (pool);
+  gst_clear_object (&pool);
 
   dpb_caps = gst_caps_copy (caps);
   gst_caps_set_simple (dpb_caps, "width", G_TYPE_INT,
@@ -1430,6 +1429,8 @@ gst_vulkan_av1_decoder_class_init (gpointer klass, gpointer class_data)
 
   g_free (long_name);
   g_free (cdata->description);
+  gst_clear_caps (&cdata->codec);
+  gst_clear_caps (&cdata->raw);
   g_free (cdata);
 }
 

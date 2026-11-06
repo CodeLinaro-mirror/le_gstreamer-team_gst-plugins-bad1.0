@@ -196,6 +196,9 @@ gst_h266_parse_nalu_header (GstH266NalUnit * nalu)
   if (nalu->size < 2)
     return FALSE;
 
+  if (data[0] & 0x80)
+    return FALSE;
+
   gst_bit_reader_init (&br, data, nalu->size - nalu->offset);
 
   /* skip the forbidden_zero_bit and nuh_reserved_zero_bit */
@@ -680,7 +683,7 @@ gst_h266_ref_pic_lists (GstH266RefPicLists * rpls, NalReader * nr,
     const GstH266SPS * sps, const GstH266PPS * pps)
 {
   const GstH266RefPicListStruct *ref_list;
-  gint i, j, num_ltrp_entries GST_UNUSED_ASSERT;
+  gint i, j, num_ltrp_entries;
 
   GST_LOG ("parsing \"ref_pic_lists\"");
 
@@ -696,7 +699,11 @@ gst_h266_ref_pic_lists (GstH266RefPicLists * rpls, NalReader * nr,
     }
 
     if (rpls->rpl_sps_flag[i]) {
-      g_assert (sps->num_ref_pic_lists[i] > 0);
+      if (G_UNLIKELY (sps->num_ref_pic_lists[i] == 0)) {
+        GST_WARNING ("rpl_sps_flag set for list %d but SPS has no "
+            "ref_pic_lists", i);
+        goto error;
+      }
 
       if (sps->num_ref_pic_lists[i] == 1) {
         rpls->rpl_idx[i] = 0;
@@ -737,7 +744,12 @@ gst_h266_ref_pic_lists (GstH266RefPicLists * rpls, NalReader * nr,
       num_ltrp_entries++;
     }
 
-    g_assert (num_ltrp_entries == ref_list->num_long_term_pic);
+    if (num_ltrp_entries != ref_list->num_long_term_pic) {
+      GST_WARNING ("num_long_term_pic (%u) does not match the number of "
+          "long term reference pictures counted (%d)",
+          ref_list->num_long_term_pic, num_ltrp_entries);
+      goto error;
+    }
   }
 
   return TRUE;
@@ -1268,7 +1280,10 @@ gst_h266_parse_chroma_qp_table (GstH266SPS * sps, NalReader * nr)
       GST_WARNING ("Invalid qp index %d", k);
       goto error;
     }
-    for (; k <= 63 + qp_bd_offset; k++) {
+    /* The spec would require 64 + qp_bd_offset table entries (up to 112)
+     * for the last QP value, but the table is sized 111 to match the
+     * VA-API ChromaQpTable layout, so stop at the end of the table. */
+    for (; k <= 63 + qp_bd_offset && k < GST_H266_MAX_POINTS_IN_QP_TABLE; k++) {
       sps->chroma_qp_table[i][k] =
           MAX (sps->chroma_qp_table[i][k - 1] + 1, -qp_bd_offset);
       sps->chroma_qp_table[i][k] = MIN (sps->chroma_qp_table[i][k], 63);
@@ -1392,7 +1407,7 @@ static GstH266ParserResult
 gst_h266_parser_parse_pic_timing (GstH266PicTiming * pt,
     NalReader * nr, const GstH266BufferingPeriod * bp, guint8 TemporalId)
 {
-  guint i, j;
+  guint i, j, k;
 
   GST_LOG ("parsing \"Picture timing\"");
 
@@ -1497,8 +1512,8 @@ gst_h266_parser_parse_pic_timing (GstH266PicTiming * pt,
                   [bp->max_sublayers_minus1];
             }
 
-            for (j = 0; j < TemporalId; j++)
-              pt->du_cpb_removal_delay_increment_minus1[i][j] =
+            for (k = 0; k < TemporalId; k++)
+              pt->du_cpb_removal_delay_increment_minus1[i][k] =
                   pt->du_cpb_removal_delay_increment_minus1[i]
                   [bp->max_sublayers_minus1];
           }
@@ -1629,7 +1644,8 @@ gst_h266_parser_parse_scalable_nesting (GstH266ScalableNesting * sn,
   } else {
     READ_UINT8 (nr, sn->all_layers_flag, 1);
     if (!sn->all_layers_flag) {
-      READ_UE_MAX (nr, sn->num_layers_minus1, GST_H266_MAX_LAYERS);
+      /* layer_id[] is indexed from 1 up to num_layers_minus1 */
+      READ_UE_MAX (nr, sn->num_layers_minus1, GST_H266_MAX_LAYERS - 1);
       for (i = 1; i <= sn->num_layers_minus1; i++)
         READ_UINT8 (nr, sn->layer_id[i], 6);
     }
@@ -2108,8 +2124,8 @@ gst_h266_parser_identify_and_split_nalu_vvc (GstH266Parser * parser,
         nalu.data = (guint8 *) data;
         nalu.valid = TRUE;
 
-        gst_h266_parse_nalu_header (&nalu);
-        g_array_append_val (nalus, nalu);
+        if (gst_h266_parse_nalu_header (&nalu))
+          g_array_append_val (nalus, nalu);
       }
       break;
     } else if ((sc_offset == 2 && data[off + sc_offset - 1] != 0)
@@ -2128,8 +2144,8 @@ gst_h266_parser_identify_and_split_nalu_vvc (GstH266Parser * parser,
       nalu.data = (guint8 *) data;
       nalu.valid = TRUE;
 
-      gst_h266_parse_nalu_header (&nalu);
-      g_array_append_val (nalus, nalu);
+      if (gst_h266_parse_nalu_header (&nalu))
+        g_array_append_val (nalus, nalu);
     } else {
       /* CONDITION-C */
       /* startcode located at beginning of this chunk without actual nal data.
@@ -2657,6 +2673,8 @@ gst_h266_parse_vps (GstH266NalUnit * nalu, GstH266VPS * vps)
   }
 
   if (!vps->each_layer_is_an_ols_flag) {
+    if (vps->num_multi_layer_olss == 0)
+      goto error;
     READ_UE_MAX (&nr, vps->num_dpb_params_minus1,
         vps->num_multi_layer_olss - 1);
 
@@ -2733,6 +2751,8 @@ gst_h266_parse_vps (GstH266NalUnit * nalu, GstH266VPS * vps)
     } else
       vps->sublayer_cpb_params_present_flag = 0;
 
+    if (vps->num_multi_layer_olss == 0)
+      goto error;
     READ_UE_MAX (&nr, vps->num_ols_timing_hrd_params_minus1,
         vps->num_multi_layer_olss - 1);
     for (i = 0; i <= vps->num_ols_timing_hrd_params_minus1; i++) {
@@ -3489,16 +3509,19 @@ gst_h266_parse_sps (GstH266Parser * parser, GstH266NalUnit * nalu,
     if (sps->timing_hrd_params_present_flag) {
       guint8 firstSubLayer;
 
-      gst_h266_parse_general_timing_hrd_parameters (&sps->general_hrd_params,
-          &nr);
+      if (!gst_h266_parse_general_timing_hrd_parameters
+          (&sps->general_hrd_params, &nr))
+        goto error;
 
       if (sps->max_sublayers_minus1 > 0)
         READ_UINT8 (&nr, sps->sublayer_cpb_params_present_flag, 1);
 
       firstSubLayer =
           sps->sublayer_cpb_params_present_flag ? 0 : sps->max_sublayers_minus1;
-      gst_h266_parse_ols_timing_hrd_parameters (&sps->ols_hrd_params, &nr,
-          &sps->general_hrd_params, firstSubLayer, sps->max_sublayers_minus1);
+      if (!gst_h266_parse_ols_timing_hrd_parameters (&sps->ols_hrd_params, &nr,
+              &sps->general_hrd_params, firstSubLayer,
+              sps->max_sublayers_minus1))
+        goto error;
     }
   }
 
@@ -3728,8 +3751,9 @@ gst_h266_parser_parse_picture_partition (GstH266SPS * sps,
         tile_y = tile_idx / pps->num_tile_columns;
 
         if (tile_x != pps->num_tile_columns - 1) {
+          /* VVC requires each slice rectangle to fit inside the tile grid */
           READ_UE_MAX (nr, pps->slice_width_in_tiles_minus1[i],
-              pps->num_tile_columns - 1);
+              pps->num_tile_columns - 1 - tile_x);
         } else {
           pps->slice_width_in_tiles_minus1[i] = 0;
         }
@@ -3737,7 +3761,7 @@ gst_h266_parser_parse_picture_partition (GstH266SPS * sps,
         if (tile_y != pps->num_tile_rows - 1 &&
             (pps->tile_idx_delta_present_flag || tile_x == 0)) {
           READ_UE_MAX (nr, pps->slice_height_in_tiles_minus1[i],
-              pps->num_tile_rows - 1);
+              pps->num_tile_rows - 1 - tile_y);
         } else {
           if (tile_y == pps->num_tile_rows - 1) {
             pps->slice_height_in_tiles_minus1[i] = 0;
@@ -4141,9 +4165,11 @@ gst_h266_parser_set_active_sps_pps (GstH266Parser * parser,
 {
   gboolean need_update = FALSE;
 
-  g_assert (sps->vps);
-  g_assert (sps->valid);
-  g_assert (pps->valid);
+  if (G_UNLIKELY (sps->vps == NULL || !sps->valid || !pps->valid)) {
+    GST_WARNING ("Unusable SPS/PPS state: vps %p, sps valid %d, pps valid %d",
+        sps->vps, sps->valid, pps->valid);
+    return FALSE;
+  }
 
   if (sps->vps != parser->active_vps) {
     parser->active_vps = (GstH266VPS *) sps->vps;
@@ -4787,7 +4813,7 @@ gst_h266_parser_parse_dci (GstH266Parser * parser,
 
   READ_UINT8 (&nr, dci_reserved_zero_4bits, 4);
   READ_UINT8 (&nr, dci->num_ptls_minus1, 4);
-  CHECK_ALLOWED_MAX (dci->num_ptls_minus1, 15);
+  CHECK_ALLOWED_MAX (dci->num_ptls_minus1, GST_H266_MAX_DCI_PTLS - 1);
   for (i = 0; i <= dci->num_ptls_minus1; i++) {
     if (!gst_h266_parse_profile_tier_level (&dci->profile_tier_level[i],
             &nr, 1, 0))
@@ -5450,8 +5476,10 @@ gst_h266_parser_parse_slice_address (GstH266Parser * parser, NalReader * nr,
         1);
 
     if (pps->num_tiles_in_pic - sh->slice_address > 1) {
+      /* Spec: num_tiles_in_slice_minus1 shall be in the range
+       * 0 to NumTilesInPic - SliceAddress - 1. */
       READ_UE_MAX (nr, sh->num_tiles_in_slice_minus1,
-          pps->num_tiles_in_pic - 1);
+          pps->num_tiles_in_pic - sh->slice_address - 1);
     } else {
       sh->num_tiles_in_slice_minus1 = 0;
     }
@@ -6066,7 +6094,11 @@ gst_h266_parser_parse_sei_message (GstH266SEIMessage * sei, NalReader * nr,
     payloadSize += payload_size_byte;
   } while (payload_size_byte == 0xff);
 
-  remaining = nal_reader_get_remaining (nr);
+  /* nal_reader_get_remaining() includes emulation prevention bytes, but
+   * payloadSize counts RBSP bytes. Also tolerate broken streams which count
+   * emulation prevention bytes in payloadSize by limiting the payload to the
+   * RBSP data that is actually available. */
+  remaining = nal_reader_get_remaining_payload_bits (nr);
   payload_size = payloadSize * 8 < remaining ? payloadSize * 8 : remaining;
   payload_start_pos_bit = nal_reader_get_pos (nr);
 

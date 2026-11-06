@@ -1,3 +1,1767 @@
+=== release 1.28.9 ===
+
+2026-11-06 12:54:37 +0000  Tim-Philipp Müller <tim@centricular.com>
+
+	* gst-plugins-bad.doap:
+	* meson.build:
+	  Release 1.28.9
+
+2026-11-06 10:56:54 +0000  Tim-Philipp Müller <tim@centricular.com>
+
+	* scripts/dist-common-files.py:
+	  scripts: dist-common-files: update for new release notes formatting
+
+2026-10-29 10:42:48 +0200  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst-libs/gst/mpegts/gstmpegtssection.c:
+	  mpegtssection: Fix potential under-read when reading the section CRC
+
+2026-10-29 10:38:30 +0200  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst-libs/gst/mpegts/gst-dvb-section.c:
+	  dvb-section: Fix transport_stream_loop_length underflow in NIT/BAT
+
+2026-10-29 01:09:39 +0200  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst-libs/gst/mpegts/gst-scte-section.c:
+	  scte-section: Fix out of bounds reads in splice_info_section parsing
+	  Adds missing and fixes wrong bounds checks.
+
+2026-10-29 01:09:38 +0200  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst-libs/gst/mpegts/gst-atsc-section.c:
+	  atsc-section: Validate RRT and MGT lengths against the section end
+
+2026-10-29 01:09:30 +0200  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst-libs/gst/mpegts/gst-dvb-section.c:
+	  dvb-section: Validate descriptor loop lengths in EIT/TOT/SIT
+
+2026-10-29 01:09:29 +0200  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst-libs/gst/mpegts/gstmpegtsdescriptor.c:
+	  mpegtsdescriptor: Fix out of bounds reads when parsing descriptors
+	  Various places trusted the advertised payload size without checking
+	  that enough data is actually available.
+
+2026-10-29 01:09:06 +0200  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst-libs/gst/mpegts/gst-dvb-descriptor.c:
+	  dvb-descriptor: Fix out of bounds reads on truncated descriptors
+	  Add bounds checks for truncated DVB descriptors where the payload size was
+	  previously trusted blindly.
+	  Also make sure to initialize out parameters in all conditions.
+	  Fixes https://gitlab.freedesktop.org/gstreamer/gstreamer/-/issues/5312
+
+2026-10-30 17:34:25 +0200  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst/mpegtsmux/gstbasetsmux.c:
+	  basetsmux: Clear the pts_adjustment high bit before setting it
+	  The highest pts_adjustment bit is OR-ed into the copied section data
+	  instead of replacing the original bit, so a section whose original
+	  adjustment had that bit set kept it whenever the computed adjustment
+	  had it cleared, adding a spurious 2^32 to the splice times. Replace
+	  the bit instead, leaving the surrounding flags untouched.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12919>
+
+2026-10-29 18:57:05 +0200  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst/mpegtsmux/gstbasetsmux.c:
+	  basetsmux: Packetize manually created SCTE sections
+	  handle_scte35_section() assumed that any section that is not in the
+	  running-time domain comes from tsdemux and has a serialized
+	  representation, and asserted on section->data otherwise. Applications
+	  are free to clear is_running_time to feed their splice times already
+	  expressed in the MPEG time domain though, and manually created
+	  sections from gst_mpegts_section_from_scte_sit() have no serialized
+	  representation, which made the muxer abort on them.
+	  Packetize such sections instead and use the result as if it came from
+	  the demuxer, its splice times are in the right domain already and
+	  only the PTS adjustment is missing.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12919>
+
+2026-10-29 11:13:46 +0200  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst-libs/gst/mpegts/gst-atsc-section.c:
+	  atsc-section: Copy compressed data when parsing string segments
+	  Let's avoid double frees.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12919>
+
+2026-10-29 10:42:49 +0200  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst-libs/gst/mpegts/gst-scte-section.c:
+	  scte-section: Fix critical on early splice event parse errors
+	  Don't unref NULL pointer arrays.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12919>
+
+2026-10-30 17:02:29 +0200  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst-libs/gst/mpegts/gstmpegtssection.c:
+	  mpegtssection: Require long sections to be at least 12 bytes long
+	  A long section consists of 3 header bytes, the 5 bytes for subtable
+	  extension, version, section number and last section number, and the
+	  4 byte CRC. That makes 12 bytes, which is also what the comment said,
+	  while the check only required 11. Align the check and the warning
+	  message with the comment.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12919>
+
+2026-10-29 12:45:54 +0200  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst-libs/gst/mpegts/gst-dvb-section.h:
+	  dvb-section: Use the correct boxed GType for BAT streams
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12919>
+
+2026-10-29 12:45:22 +0200  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst-libs/gst/mpegts/gst-dvb-descriptor.c:
+	  dvb-descriptor: Deep copy members of the extended event descriptor copy
+	  Let's avoid double frees.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12919>
+
+2026-10-29 11:14:10 +0200  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst-libs/gst/mpegts/gst-scte-section.c:
+	  scte-section: Write splice_count in serialized schedule commands
+	  The splice_schedule command starts with a splice_count byte that
+	  the parser consumes before reading that many splice events, but
+	  _packetize_sit() never wrote it. Serializing a schedule section
+	  with a number of events other than one and parsing it back
+	  therefore lost or corrupted the events. Count and emit the byte
+	  for the schedule command.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12919>
+
+2026-10-29 11:13:41 +0200  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst-libs/gst/mpegts/gstmpegtsdescriptor.c:
+	  mpegtsdescriptor: Escape control codes as bytes in EUC-KR
+	  EUC-KR is not a fixed-width encoding: iconv() emits characters as
+	  either single US-ASCII bytes or two KS X 1001 bytes >= 0xA1. The
+	  control code escaping ran the fixed-width 16-bit BE pass over the
+	  converted text, which read one byte past the end for odd sizes and
+	  never escaped an unaligned LF.
+	  Handle EUC-KR separately: EN 300 468 (annex A, table A.2) requires
+	  CR/LF in two byte character tables to be transmitted as the control
+	  code 0xE0 0x8A, and since a LF byte cannot occur within a KS X 1001
+	  double byte, replace each LF with the escape sequence while
+	  widening the buffer as needed.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12919>
+
+2026-10-29 10:42:21 +0200  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst-libs/gst/mpegts/gst-atsc-section.c:
+	  atsc-section: Deep copy owned members in boxed copy functions
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12919>
+
+2026-10-29 10:42:08 +0200  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst-libs/gst/mpegts/gst-atsc-section.c:
+	  atsc-section: Fix MGT and RRT packetization
+	  _packetize_mgt() indexed the tables array with a literal 1 instead of
+	  the loop variable, dereferencing an uninitialized GPtrArray slot when
+	  the table array held less than two entries, and it reserved 11 bytes
+	  per table in the output buffer but only wrote 7, emitting
+	  uninitialized heap memory in place of the never written
+	  table_type_number_bytes field.
+	  _packetize_rrt() counted the packetized size of each dimension's names
+	  but serialized the top-level region names instead, overflowing the
+	  output buffer whenever the region names were larger, and the
+	  dimensions_defined field was counted but never written.
+	  Also make the multi string helpers tolerate NULL string arrays and
+	  multi strings without a segments array instead of dereferencing them:
+	  there is no public constructor for the nested multi string types, so
+	  applications have to build them with NULL arrays.
+	  _parse_rrt() read dimensions_defined together with its 3 reserved bits
+	  which are set on the wire and by the packetizer, inflating the parsed
+	  count past the end of the section data; mask them out.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12919>
+
+2026-10-29 10:37:52 +0200  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst-libs/gst/mpegts/gst-dvb-descriptor.c:
+	* gst-libs/gst/mpegts/gstmpegtsdescriptor.c:
+	  mpegtsdescriptor: Validate payload sizes in descriptor creation functions
+	  The internal descriptor constructors take a guint8 length while the
+	  public creators take a gsize, silently truncating it before the
+	  allocation but not before the payload memcpy.
+	  Also initialize the size variable in gst_mpegts_descriptor_from_dvb_network_name(),
+	  it was read uninitialized when encoding failed.
+	  Also reject a NULL struct in gst_mpegts_descriptor_from_jpeg_xs(),
+	  which dereferenced it immediately.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12919>
+
+2026-10-18 09:23:21 -0400  Nicolas Dufresne <nicolas.dufresne@collabora.com>
+
+	* gst-libs/gst/codecparsers/gsth265parser.c:
+	  h265parser: Initialize sps_ext structure
+	  The parsed data is being discarded in both cases. There is no visible side
+	  effect of initializing these structure, but the path is rather complex.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/13000>
+
+2026-10-16 15:45:52 -0400  Nicolas Dufresne <nicolas.dufresne@collabora.com>
+
+	* gst-libs/gst/codecparsers/gsth265parser.c:
+	  h265parser: Fix use of uninitialized HRD parameters
+	  This issue causes undefined behaviour that can be detected with specific
+	  stream and valgrind. Avoid this by clearing the entire structure before
+	  filling it.
+	  Fixes #5332
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/13000>
+
+2026-10-29 00:27:33 +0200  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst/mxf/mxfdemux.c:
+	  mxfdemux: use the demuxer as logging object for a warning
+	  Fixes https://gitlab.freedesktop.org/gstreamer/gstreamer/-/work_items/5392
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12998>
+
+2026-10-21 20:23:40 +0200  François Laignel <francois@centricular.com>
+
+	* gst/mxf/mxfdemux.c:
+	  mxfdemux: check slice index before reading slice offset
+	  The slice index in a delta entry comes from a potentially malicious source, it
+	  can be out of range and can't be checked beforehand. Add bounds checks before
+	  indexing into the slice offset array.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12998>
+
+2026-10-27 12:21:24 +0200  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst/mxf/mxfdemux.c:
+	* gst/mxf/mxfdemux.h:
+	  mxfdemux: only use delta entries of a consistent index search domain
+	  The delta lookup table is a property of a single index segment, but the
+	  position of a track in that table is stored on the track and used with
+	  every segment of the index search domain. This only works if all segments
+	  of the domain use the same delta table, which is not guaranteed for
+	  malicious files.
+	  Drop the delta entries of a domain as soon as one of its segments uses a
+	  different table, so that tracks fall back to ignoring delta entries
+	  instead of applying entries taken from an unrelated table.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12998>
+
+2026-10-16 18:19:54 +0200  François Laignel <francois@centricular.com>
+
+	* gst/mxf/mxfdemux.c:
+	* gst/mxf/mxfdemux.h:
+	  mxfdemux: fix out-of-bounds read when looking up delta entry by delta_id
+	  etrack->delta_id uses negative values to encode UNKNOWN or IGNORE. All reads
+	  into the segment->delta_entries array using etrack->delta_id must ensure
+	  delta_id refers to an entry of the segment read from.
+	  fixes https://gitlab.freedesktop.org/gstreamer/gstreamer/-/work_items/5352
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12998>
+
+2026-11-05 09:47:32 +0200  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst/asfmux/gstasfparse.c:
+	  asfparse: Clamp object sizes to G_MAXUINT32
+	  The minimum frame size API of baseparse takes a guint32.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/13006>
+
+2026-11-05 09:46:55 +0200  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst/asfmux/gstasfobjects.c:
+	* gst/asfmux/gstasfobjects.h:
+	  asfmux: asfobjects: Reject packet sizes below the smallest possible packet
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/13006>
+
+2026-11-05 09:38:13 +0200  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst/asfmux/gstasfobjects.c:
+	  asfmux: asfobjects: Reject header child objects smaller than the object header
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/13006>
+
+2026-11-05 09:37:14 +0200  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst/asfmux/gstrtpasfpay.c:
+	  rtpasfpay: Add bounds check against the overall packet size
+	  The packet size comes from the packet data.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/13006>
+
+2026-11-05 09:36:23 +0200  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst/asfmux/gstrtpasfpay.c:
+	  rtpasfpay: Reject packets whose padding is bigger or equal to the packet size
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/13006>
+
+2026-11-05 09:34:46 +0200  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst/asfmux/gstasfmux.c:
+	  asfmux: Fix header size calculation for non-BMP characters in string tags
+	  The size reserved for string tag values was computed as
+	  2 * (1 + g_utf8_strlen (text, -1)), which assumes every code point is
+	  2 bytes in UTF-16. Characters outside the Basic Multilingual Plane are
+	  encoded as surrogate pairs (4 bytes), so the header buffer was
+	  under-allocated by 2 bytes per such character, and
+	  gst_asf_mux_write_string_with_size() then wrote past its end.
+	  Compute the size with the same g_convert() call used by the write path
+	  so that both always agree.
+	  Patch provided by Bruno Fournier.
+	  Fixes https://gitlab.freedesktop.org/gstreamer/gstreamer/-/issues/5321
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/13006>
+
+2026-11-04 18:08:28 +0100  Mathieu Duponchelle <mathieu@centricular.com>
+
+	* gst/festival/gstfestival.c:
+	  festival: cap waveform size
+	  The element stores the entire waveform for a single input cue in memory
+	  before outputting it. This can easily result in OOM with malicious
+	  input, for instance a text cue that would cause the festival server to
+	  generate one day's worth of audio samples.
+	  This commit simply puts a 128 MB cap on the maximum waveform size, or
+	  about one hour worth of samples. This value should be more than enough
+	  for legitimate inputs.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/13004>
+
+2026-10-29 13:51:35 +0100  Mathieu Duponchelle <mathieu@centricular.com>
+
+	* gst/festival/gstfestival.c:
+	  festival: check read return value
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/13004>
+
+2026-10-22 10:00:37 +0300  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst/vmnc/vmncdec.c:
+	  vmnc: Use the correct stride for the output frames
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/13001>
+
+2026-10-22 10:00:20 +0300  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst/vmnc/vmncdec.c:
+	  vmnc: Only remember the format descriptor when decoding
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/13001>
+
+2026-10-22 00:50:27 +0300  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst/vmnc/vmncdec.c:
+	  vmnc: Use unaligned-safe accessors for pixel data
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/13001>
+
+2026-10-22 00:01:53 +0300  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst/vmnc/vmncdec.c:
+	  vmnc: Use a lower bound for WMVi screen dimensions
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/13001>
+
+2026-10-21 18:32:27 +0300  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst/vmnc/vmncdec.c:
+	  vmnc: Drop colour cursor on pixel format change
+	  The cursor buffers are allocated with the bytes_per_pixel that were in
+	  use when they were allocated, but render_colour_cursor() indexes them
+	  with the current bytes_per_pixel. We have to drop the cursors until a
+	  new WMVd arrives.
+	  Fixes https://gitlab.freedesktop.org/gstreamer/gstreamer/-/work_items/5308
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/13001>
+
+2026-11-04 14:57:07 +0100  Piotr Brzeziński <piotr@centricular.com>
+
+	* sys/androidmedia/gstamcaudiodec.c:
+	* sys/androidmedia/gstamcvideodec.c:
+	  androidmedia: Don't wait for input buffers after the srcpad loop stopped
+	  If the loop stopped with EOS or an error while the codec's input was
+	  full, handle_frame waited for an input buffer forever. It now bails out
+	  and returns the last downstream result.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12996>
+
+2026-11-04 13:36:57 +0100  Piotr Brzeziński <piotr@centricular.com>
+
+	* sys/androidmedia/gstamcaudiodec.c:
+	* sys/androidmedia/gstamcvideodec.c:
+	  androidmedia: Fix drain deadlock when the srcpad loop stops
+	  If the srcpad loop stopped before a drain started waiting for it,
+	  draining would then get stuck. It held the upstream stream lock, so if
+	  the upstream was a queue, that queue couldn't then pause for the flush
+	  start, locking everything up. This simply adds a check before we start
+	  waiting and returns the actual downstream push result instead of always
+	  OK. Also added a missing save of the downstream ret value after a failed
+	  frame allocation in the video dec.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12996>
+
+2026-10-04 16:42:25 +0900  Daeho Ro <email@daeho.ro>
+
+	* ext/faac/gstfaac.h:
+	* ext/faac/meson.build:
+	* tests/check/meson.build:
+	  faac: detect libfaac via pkg-config first
+	  faac has installed a faac.pc since 1.31. Use it when available and only
+	  fall back to the faac.h symbol check plus cc.find_library() for older
+	  releases without one. Like other plugins, skip all dependency checks
+	  when the plugin is disabled.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12985>
+
+2026-09-29 21:36:28 +0900  Daeho Ro <email@daeho.ro>
+
+	* ext/faac/gstfaac.c:
+	  faac: pass caller_size to faac_params_init() for faac >= 2.2
+	  faac 2.2 bumped FAAC_VERSION_MAJOR and the library SONAME to 2 and
+	  added a caller_size argument to faac_params_init(). Pass sizeof(params)
+	  when FAAC_VERSION_MAJOR >= 2 and keep the one-argument call for faac
+	  2.0 and 2.1.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12985>
+
+2026-07-20 20:50:06 +0900  Daeho Ro <email@daeho.ro>
+
+	* ext/faac/gstfaac.c:
+	* ext/faac/gstfaac.h:
+	* ext/faac/meson.build:
+	  faac: support faac >= 2.0 (faac_* API)
+	  faac 2.0 removed the legacy faacEnc* API and bumped the library SONAME
+	  to 1. Detect the new API via FAAC_VERSION_MAJOR and use it when
+	  available, keeping the faacEnc* path for faac 1.x.
+	  With the new API the pad templates only offer the lc profile: faac 2.0
+	  dropped the MAIN/SSR/LTP object types, which were never actually
+	  implemented by libfaac. The AudioSpecificConfig buffer is library-owned
+	  in the new API and must not be freed. The meson header check now accepts
+	  either faacEncOpen (1.x) or faac_encoder_open (2.0).
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12985>
+
+2026-11-05 09:39:22 +0200  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst/asfmux/gstasfobjects.c:
+	  asfmux: asfobjects: Fix gboolean / GstFlowReturn confusion
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12983>
+
+2026-11-05 09:37:52 +0200  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst/asfmux/gstasfparse.c:
+	  asfparse: Unmap buffer on parsing errors
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12983>
+
+2026-02-02 20:57:20 +0530  Nirbheek Chauhan <nirbheek@centricular.com>
+
+	* gst-libs/gst/vulkan/ios/gstvkwindow_ios.m:
+	  vulkan/ios: Remove internal_view from the superview when closing
+	  Otherwise we will leave a dangling pointer in the UIView hierarchy,
+	  and any code that encounters it will crash. This allows the iOS app to
+	  reuse the UIView across pipeline instances.
+	  Same fix as eagl.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12975>
+
+2026-10-22 10:29:15 +0300  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst/librfb/rfbdecoder.c:
+	  rfbsrc: Guard against missing previous frame buffer in update requests
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12972>
+
+2026-10-22 10:16:57 +0300  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst/librfb/rfbdecoder.c:
+	  rfbsrc: Treat unknown server messages as a fatal error
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12972>
+
+2026-10-22 10:10:23 +0300  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst/librfb/rfbdecoder.c:
+	  rfbsrc: Reset the decoder state when disconnecting
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12972>
+
+2026-10-22 10:04:07 +0300  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst/librfb/gstrfbsrc.c:
+	* gst/librfb/rfbdecoder.c:
+	  rfbsrc: Validate the framebuffer pixel format
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12972>
+
+2026-10-22 00:47:43 +0300  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst/librfb/rfbdecoder.c:
+	  rfbsrc: Avoid unaligned writes when filling rectangles
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12972>
+
+2026-10-22 00:20:16 +0300  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst/librfb/rfbdecoder.c:
+	  rfbsrc: Bound the framebuffer dimensions
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12972>
+
+2026-10-22 00:05:13 +0300  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst/librfb/rfbdecoder.c:
+	  rfbsrc: Do not decode rectangles larger than the framebuffer
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12972>
+
+2026-10-21 21:51:40 +0300  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst/librfb/rfbdecoder.c:
+	  rfbsrc: Handle 3 bytes per pixel formats when filling rectangles
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12972>
+
+2026-10-21 21:48:14 +0300  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst/librfb/rfbdecoder.c:
+	  rfbsrc: Bound the length of server provided strings
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12972>
+
+2026-10-21 21:24:01 +0300  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst/librfb/rfbdecoder.c:
+	  rfbsrc: Reject invalid colour shifts from the server
+	  The pixel format shifts from the server are applied directly to a
+	  guint32 later on; values >= 32 are undefined. Reject such handshakes
+	  instead of producing a bogus video format.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12972>
+
+2026-10-21 18:57:01 +0300  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst/librfb/gstrfbsrc.c:
+	* gst/librfb/rfbdecoder.c:
+	  rfbsrc: Write pixels with the stride of the output format
+	  The decoder wrote rows packed at rect_width * bytespp while the
+	  frames and the negotiated caps use the padded stride of the output
+	  format, shifting all rows for formats like RGB with a padded stride.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12972>
+
+2026-10-21 18:46:16 +0300  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst/librfb/gstrfbsrc.c:
+	  rfbsrc: Reinitialize decoder state on stop
+	  With inited left set, start() skipped the reconnect and handshake and
+	  fill() copied from the freed frame buffer after a state cycle.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12972>
+
+2026-10-21 18:46:08 +0300  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst/librfb/gstrfbsrc.c:
+	  rfbsrc: Zero the frame buffers
+	  Frame areas not covered by the server updates and the stride padding
+	  of the output format were never written, leaking uninitialized heap
+	  memory into the output buffers.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12972>
+
+2026-10-21 18:45:50 +0300  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst/librfb/rfbdecoder.c:
+	  rfbsrc: Do not read subrectangles when there are none
+	  A hextile tile may legitimately contain zero subrectangles. Passing 0
+	  to rfb_decoder_read() failed its length assertion and tore down the
+	  connection.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12972>
+
+2026-10-21 18:45:25 +0300  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst/librfb/rfbdecoder.c:
+	  rfbsrc: Handle framebuffer updates with zero rectangles
+	  n_rects is only tested after being decremented, so an update with no
+	  rectangles would keep the state machine from ever completing the frame,
+	  letting a server stall the source task indefinitely.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12972>
+
+2026-10-21 18:45:09 +0300  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst/librfb/rfbdecoder.c:
+	  rfbsrc: Do not use server strings without termination
+	  The reason and ServerCutText strings sent by the server are not
+	  NUL-terminated on the wire. Copying them with g_strndup() before
+	  printing avoids out-of-bounds reads when formatting the warning and
+	  GError messages, and negative lengths are now rejected.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12972>
+
+2026-10-21 18:44:44 +0300  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst/librfb/rfbdecoder.c:
+	  rfbsrc: Do not decode CopyRect when it was not negotiated
+	  A malicious server can send CopyRect-encoded rectangles although the
+	  encoding was never requested. The prev_frame backup buffer is only
+	  allocated when the use-copyrect property is set, so decoding such a
+	  rectangle reads through a NULL base pointer.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12972>
+
+2026-10-22 10:56:04 -0700  Xavier Claessens <xclaessens@netflix.com>
+
+	* gst/videoparsers/gsth265parse.c:
+	  h265parse: Fix have_vcl_in_frame flag
+	  In the packetized path, have_vcl_in_frame was being set after
+	  gst_h265_parse_parse_frame() had already used it and reset it, and from
+	  the previous frame's last NAL. and the first frame always got duration
+	  0. The flag is now set inside the loop for each NAL, right after
+	  gst_h265_parse_process_nal(), which is how h266parse already does it.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12733>
+
+2026-04-16 12:02:01 -0400  Detlev Casanova <detlev.casanova@collabora.com>
+
+	* tests/check/elements/h264parse.c:
+	  tests: h264parse: Add test to ensure non-VCL NALs have a DTS of 0
+	  Some non-VCL NALs can have invalid duration values, which could make
+	  gstreamer drop future VCL NALs.
+	  Make sure non-VCL always have a 0 duration.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12733>
+
+2026-04-16 10:30:20 -0400  Detlev Casanova <detlev.casanova@collabora.com>
+
+	* tests/check/elements/h266parse.c:
+	  tests: h266parse: Add test to ensure non-VCL NALs have a DTS of 0
+	  Some non-VCL NALs can have invalid duration values, which could make
+	  gstreamer drop future VCL NALs.
+	  Make sure non-VCL always have a 0 duration.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12733>
+
+2026-04-16 10:28:20 -0400  Detlev Casanova <detlev.casanova@collabora.com>
+
+	* gst/videoparsers/gsth266parse.c:
+	* gst/videoparsers/gsth266parse.h:
+	  h266parse: only extrapolate duration for vcl nal
+	  Without this change we're extrapolating nal duration even for non-vcl nal, which
+	  lead to incorrect duration, incorrect dts and incorrect pts and cause
+	  frame-drop.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12733>
+
+2026-03-24 11:18:03 -0400  Detlev Casanova <detlev.casanova@collabora.com>
+
+	* tests/check/elements/h265parse.c:
+	  tests: h265parse: Add test to ensure non-VCL NALs have a DTS of 0
+	  Some non-VCL NALs can have invalid duration values, which could make
+	  gstreamer drop future VCL NALs.
+	  Make sure non-VCL always have a 0 duration.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12733>
+
+2025-02-07 16:17:12 -0500  Daniel Morin <daniel.morin@collabora.com>
+
+	* gst/videoparsers/gsth265parse.c:
+	* gst/videoparsers/gsth265parse.h:
+	  h265parse: only extrapolate duration for vcl nal
+	  - Without this change we're extrapolating nal duration even for non-vcl nal, which
+	  lead to incorrect duration, incorrect dts and incorrect pts and cause
+	  frame-drop.
+	  Fixes: #4099
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12733>
+
+2026-10-30 20:03:00 +0530  Nirbheek Chauhan <nirbheek.chauhan@coram.ai>
+
+	* gst-libs/gst/codecparsers/gsth264parser.c:
+	* gst-libs/gst/codecparsers/gsth265parser.c:
+	* gst-libs/gst/codecparsers/gsth266parser.c:
+	* gst/videoparsers/gsth264parse.c:
+	* gst/videoparsers/gsth265parse.c:
+	* gst/videoparsers/gsth266parse.c:
+	* tests/check/elements/h264parse.c:
+	* tests/check/libs/h264parser.c:
+	* tests/check/libs/h265parser.c:
+	* tests/check/libs/h266parser.c:
+	  codecparsers: h26x: Reject NALs with forbidden_zero_bit set
+	  Reject forbidden headers in H.264, H.265 and H.266 NAL identification.
+	  When splitting packetized input, skip invalid chunks while preserving
+	  valid NALs before and after them.
+	  Reject forbidden headers in direct H.264 subset SPS parsing as well.
+	  Otherwise, camera metadata can be accepted as a parameter set and
+	  corrupt the stream dimensions. Add regression coverage for these paths.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12962>
+
+2026-11-03 07:14:05 +0100  Edward Hervey <edward@centricular.com>
+
+	* gst-libs/gst/codecparsers/gsth265parser.c:
+	* tests/check/libs/h265parser.c:
+	  codecparsers: h265: Free SEI payload when parsing fails
+	  gst_h265_parser_parse_sei_message() returns the payload parser result
+	  directly, bypassing the error label that frees the message. A malformed
+	  picture timing SEI that fails after the decoding unit arrays were
+	  allocated leaked them: the failed message is never appended to the
+	  array, so its clear function never runs.
+	  Take the error path when a payload parser fails.
+	  The decoding unit arrays are also allocated for a single decoding unit,
+	  but the free and copy functions keyed off num_decoding_units_minus1 and
+	  skipped them. Free them unconditionally, and copy them based on whether
+	  the source has them.
+	  oss-fuzz: 5916135967752192 (issue 580193202)
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12959>
+
+2026-09-19 15:55:56 +0200  Mark Nauwelaerts <mnauw@users.sourceforge.net>
+
+	* gst/mpegdemux/gstmpegdemux.c:
+	  mpegdemux: increase gap thresholds
+	  Fixes #5317
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12946>
+
+2026-09-19 15:55:38 +0200  Mark Nauwelaerts <mnauw@users.sourceforge.net>
+
+	* gst/mpegdemux/gstmpegdemux.c:
+	  mpegdemux: compare to segment position for sending gap updates
+	  Fixes #5317
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12946>
+
+2026-11-01 09:54:58 +0000  Daniel Golle <daniel@makrotopia.org>
+
+	* sys/v4l2codecs/gstv4l2codech264dec.c:
+	* sys/v4l2codecs/gstv4l2codech265dec.c:
+	  v4l2codecs: h264, h265: negotiate with the first picture
+	  When the caps carry codec data, the sequence is parsed while decodebin
+	  pushes the sticky events into the new decoder, before it exposes the
+	  decoder's src pad. Negotiating right there sends the allocation query
+	  to a pad nothing answers, so DMABuf caps are found without GstVideoMeta
+	  and the caps event fails with not-negotiated. Record that negotiation
+	  is needed and do it when the first picture starts, as the AV1 decoder
+	  already does; by then the pad is exposed and linked to the sink.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12940>
+
+2026-10-31 21:17:31 +0200  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst-libs/gst/codecparsers/gsth266parser.c:
+	* gst-libs/gst/codecparsers/gsth266parser.h:
+	  h266parser: Fix out-of-bounds write when parsing DCI
+	  The corresponding API is currently not called by anything in-tree.
+	  Fixes https://gitlab.freedesktop.org/gstreamer/gstreamer/-/issues/5323
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12926>
+
+2026-05-20 13:24:18 +0200  Benjamin Gaignard <benjamin.gaignard@collabora.com>
+
+	* sys/v4l2codecs/gstv4l2codecmpeg2dec.c:
+	  v4l2codecs: mpeg2: Reset pool size when discarding source pool
+	  When releasing the source pool, reset pool minimum size to avoid
+	  allocating too much buffers on an other session.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12922>
+
+2026-05-20 13:23:23 +0200  Benjamin Gaignard <benjamin.gaignard@collabora.com>
+
+	* sys/v4l2codecs/gstv4l2codecav1dec.c:
+	  v4l2codecs: av1: Reset pool size when discarding source pool
+	  When releasing the source pool, reset pool minimum size to avoid
+	  allocating too much buffers on an other session.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12922>
+
+2026-05-20 13:22:34 +0200  Benjamin Gaignard <benjamin.gaignard@collabora.com>
+
+	* sys/v4l2codecs/gstv4l2codech265dec.c:
+	  v4l2codecs: h265: Reset pool size when discarding source pool
+	  When releasing the source pool, reset pool minimum size to avoid
+	  allocating too much buffers on an other session.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12922>
+
+2026-05-19 10:25:46 +0200  Benjamin Gaignard <benjamin.gaignard@collabora.com>
+
+	* sys/v4l2codecs/gstv4l2codech264dec.c:
+	  v4l2codecs: h264: Minimize memory allocation
+	  Be smarter when allocating sink and source memory pools to reduce the
+	  memory footprint. Use gst_v4l2_decoder_get_render_delay() to know the
+	  need number of buffers for downstream element.
+	  Reset minimum pool size when discarding the source pool to be sure that
+	  an other session won't use a wrong buffer pool size.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12922>
+
+2026-05-19 09:03:35 +0200  Benjamin Gaignard <benjamin.gaignard@collabora.com>
+
+	* sys/v4l2codecs/gstv4l2codecvp8dec.c:
+	  v4l2codecs: vp8: Minimize memory allocation
+	  Be smarter when allocating sink and source memory pools to reduce the
+	  memory footprint. Use gst_v4l2_decoder_get_render_delay() to know the
+	  need number of buffers for downstream element.
+	  Reset minimum pool size when discarding the source pool to be sure that
+	  an other session doesn't use a wrong buffer pool size.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12922>
+
+2026-05-13 16:28:00 +0200  Benjamin Gaignard <benjamin.gaignard@collabora.com>
+
+	* sys/v4l2codecs/gstv4l2codecvp9dec.c:
+	  v4l2codecs: vp9: Minimize memory allocation
+	  Be smarter when allocating sink and source memory pools to reduce the
+	  memory footprint. Use gst_v4l2_decoder_get_render_delay() to know the
+	  need number of buffers for downstream element.
+	  Reset minimum pool size when discarding the source pool to be sure
+	  that an other session doesn't use a wrong buffer pool size.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12922>
+
+2026-10-09 01:30:12 +0530  Nirbheek Chauhan <nirbheek.chauhan@coram.ai>
+
+	* gst/videoparsers/gsth264parse.c:
+	* gst/videoparsers/gsth265parse.c:
+	* gst/videoparsers/gsth266parse.c:
+	* tests/check/elements/h264parse.c:
+	* tests/check/elements/h265parse.c:
+	* tests/check/elements/h266parse.c:
+	  h26*parse: Reject malformed NALs with forbidden_zero_bit set
+	  Some cameras by "MULTITECH SYSTEMS, INC." append custom metadata as
+	  a valid-seeming NAL unit which will pass through the depayloader, and
+	  is expected to be dropped by standards-compliant parsers because the
+	  forbidden_zero_bit is set instead of being unset.
+	  We need to drop such NALs, or we will interpret it as a PPS causing
+	  a resolution change to an absurd value like 16×16 / 16×32 / 48×32.
+	  This was reproduced with an H264 RTSP stream, but the same change
+	  makes sense for H265 and H266 as well.
+	  (cherry picked from commit 07f8674039ebd06708b9e0dc463991d92cbd1173)
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12767>
+
+2026-10-30 09:30:53 +0100  Edward Hervey <edward@centricular.com>
+
+	* gst/ivfparse/gstivfparse.c:
+	  ivfparse: Reject frame sizes that overflow the size check
+	  frame_size is read from the stream and added to the frame header size as
+	  a guint32 to check that the buffer holds the whole frame. A value close
+	  to G_MAXUINT32 wraps that sum, the check passes, and the frame is then
+	  copied with a size larger than the buffer, tripping a critical in
+	  gst_buffer_copy_region and over-reading when checks are disabled.
+	  Reject frame sizes that do not fit in the sum.
+	  oss-fuzz: 6030072591745024 (issue 578103620)
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12907>
+
+2026-10-22 16:22:25 +0200  Edward Hervey <edward@centricular.com>
+
+	* gst-libs/gst/codecparsers/gsth265parser.c:
+	* tests/check/libs/h265parser.c:
+	  codecparsers: h265: Do not overflow conformance window size
+	  The conf_win_*_offset fields are unbounded ue() values. The cropped
+	  size is computed from them in 32-bit arithmetic and stored in gint
+	  fields, so an oversized conformance window wraps around and a
+	  negative crop rectangle width or height is accepted and handed to
+	  decoders.
+	  Sum the offsets in unsigned 64 bit arithmetic, which cannot wrap, and
+	  reject a conformance window that does not leave a non-empty picture.
+	  The h266 parser already bounds these offsets and checks the
+	  conformance window, so only h265 needs the treatment already applied
+	  to h264.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12899>
+
+2026-10-21 17:22:48 +0300  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst-libs/gst/codecparsers/gsth266parser.c:
+	  h266parser: Validate that rectangular slices fit into the tile grid
+	  The maximum values of slice_{width,height}_in_tiles_minus1 were only checked
+	  against the size of the whole tile grid and ignored the slice's start position.
+	  Because of this, a slice starting at a non-zero tile column or row could extend
+	  past the grid, which could cause out-of-bounds reads of the tile boundary and
+	  size arrays in gst_h266_parser_generate_ctb_map().
+	  Fixes https://gitlab.freedesktop.org/gstreamer/gstreamer/-/work_items/5269
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12883>
+
+2026-10-26 16:34:53 +0100  Edward Hervey <edward@centricular.com>
+
+	* gst-libs/gst/codecparsers/gsth266parser.c:
+	  codecparsers: h266: Reject VPS when multi-layer OLS count is zero
+	  num_dpb_params_minus1 and num_ols_timing_hrd_params_minus1 are read with
+	  an upper bound of num_multi_layer_olss - 1. When num_multi_layer_olss is
+	  0 that bound underflows to G_MAXUINT, so an unbounded value is accepted
+	  and then drives the dpb and ols-hrd parse loops past the end of their
+	  arrays. The spec range for both elements is empty in that case, so
+	  reject the VPS instead.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12874>
+
+2026-10-24 09:34:46 +0200  Edward Hervey <edward@centricular.com>
+
+	* gst/videoparsers/h263parse.c:
+	* tests/check/elements/h263parse.c:
+	  videoparsers: h263: Reject zero custom picture clock frequency code
+	  The custom_pc_clock_freq code in the CPCFC is 7 bits and the value 0
+	  is reserved (valid range 1..127), but the parser fed it straight to
+	  gst_util_uint64_scale_int() as the denominator of the frame rate.
+	  A stream carrying code 0 therefore tripped the
+	  _gst_util_uint64_scale_int() assertion. Reject the header instead, as
+	  for the other corrupt header fields, and let the element fall back to
+	  passthrough.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12874>
+
+2026-10-23 16:40:55 +0200  Edward Hervey <edward@centricular.com>
+
+	* gst-libs/gst/codecparsers/gstav1parser.c:
+	* tests/check/elements/av1parse.c:
+	  codecparsers: av1: Do not left-shift a negative global motion value
+	  The global motion parameters scale the decoded sub-exponential value
+	  to the warp model precision by left-shifting it. The decoded value is
+	  signed, and left-shifting a negative int is undefined behaviour.
+	  Check the parse status before using the value, then scale it by
+	  multiplication; the product fits a gint for every warp model type.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12874>
+
+2026-10-23 15:35:10 +0200  Edward Hervey <edward@centricular.com>
+
+	* gst/videoparsers/gsth265parse.c:
+	* tests/check/elements/h265parse.c:
+	  videoparsers: h265: Skip timecode meta when VUI time_scale is zero
+	  The timecode SEI scales the frame count by
+	  fps_n * num_units_in_tick / (fps_d * time_scale). time_scale is
+	  parsed from the VUI without a range check; a zero value makes the
+	  denominator zero and trips the assertion in gst_util_uint64_scale().
+	  Warn and skip the timecode meta when the scale denominator is zero.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12874>
+
+2026-10-23 15:35:09 +0200  Edward Hervey <edward@centricular.com>
+
+	* gst-libs/gst/codecparsers/gstav1parser.c:
+	* tests/check/elements/av1parse.c:
+	  codecparsers: av1: Fail parse on frame size reference to an unfilled slot
+	  A frame header can derive its size from a reference frame slot. The
+	  slot only carries a meaningful size once a frame using it has been
+	  parsed; a stream can reference a slot that was never filled, which
+	  holds a zero frame size. The zero size propagated into the tile grid
+	  computation, which divides by the width of the widest tile in
+	  superblocks; with a zero-sized frame no tile width is read and that
+	  divisor stays zero.
+	  Fail the parse with a missing-reference error when the referenced slot
+	  has no known size.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12874>
+
+2026-10-23 14:20:40 +0200  Edward Hervey <edward@centricular.com>
+
+	* gst-libs/gst/codecparsers/gsth266parser.c:
+	* tests/check/elements/h266parse.c:
+	  codecparsers: h266: Do not assert on SPS/PPS state in slice parsing
+	  gst_h266_parser_set_active_sps_pps() asserted that the active SPS
+	  has a VPS and that the SPS and PPS are valid. A crafted stream can
+	  reach it with an SPS that was parsed without a VPS: the slice header
+	  parse only checks that the referenced SPS and PPS exist. The assert
+	  then aborts the process instead of failing the parse.
+	  Turn the asserts into a parse failure; the only caller already
+	  handles the error return.
+	  oss-fuzz: 5808758765453312 (issue 577715859)
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12874>
+
+2026-10-23 13:38:14 +0200  Edward Hervey <edward@centricular.com>
+
+	* gst-libs/gst/codecparsers/gstav1parser.c:
+	* tests/check/elements/av1parse.c:
+	  codecparsers: av1: Fix integer overflow in av1_bitstreamfn_le
+	  av1_bitstreamfn_le() assembles an n-byte little-endian number by
+	  shifting each byte by i * 8. The bytes are promoted to int, so a
+	  value whose top byte is 0x80 or greater, such as tg_size_minus_1 of
+	  a tile group with explicit sizes, caused a signed left shift
+	  overflow, which is undefined behaviour.
+	  Cast the byte to guint before shifting.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12874>
+
+2026-10-23 13:25:35 +0200  Edward Hervey <edward@centricular.com>
+
+	* gst-libs/gst/codecparsers/gsth266parser.c:
+	* tests/check/elements/h266parse.c:
+	  codecparsers: h266: Replace asserts in ref_pic_lists parsing
+	  gst_h266_ref_pic_lists() asserted that the SPS holds at least one
+	  reference picture list for each list signalled with rpl_sps_flag,
+	  and that num_long_term_pic matches the number of long term pictures
+	  read from the bitstream. Crafted streams can violate both: with
+	  rpl1_idx_present_flag equal to 0 the second list copies the flags
+	  of the first one even when the SPS has no lists, and the long term
+	  count is read independently of the entries that follow it.
+	  Turn both asserts into a parse failure so that malformed streams are
+	  rejected instead of aborting the process.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12874>
+
+2026-10-26 16:38:02 +0100  Edward Hervey <edward@centricular.com>
+
+	* gst-libs/gst/codecparsers/gsth266parser.c:
+	* tests/check/elements/h266parse.c:
+	  codecparsers: h266: Check HRD parameter parse return values
+	  gst_h266_parse_sps() ignored the return value of
+	  gst_h266_parse_general_timing_hrd_parameters() and
+	  gst_h266_parse_ols_timing_hrd_parameters(). With a truncated HRD
+	  parameter structure either call can fail partway through, leaving
+	  partially filled state that parsing then continued on.
+	  Propagate the failure and abort SPS parsing when either call fails.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12874>
+
+2026-10-23 10:51:25 +0200  Edward Hervey <edward@centricular.com>
+
+	* gst-libs/gst/codecparsers/gsth266parser.c:
+	* tests/check/libs/h266parser.c:
+	  codecparsers: h266: Fix off-by-one bound for scalable nesting layer count
+	  num_layers_minus1 was allowed up to GST_H266_MAX_LAYERS (64), but the
+	  layer_id array is indexed from 1 up to num_layers_minus1, so the last
+	  iteration wrote one entry past the end of the array. The spec limits
+	  the value to vps_max_layers_minus1 - 1 (63).
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12874>
+
+2026-10-23 10:51:25 +0200  Edward Hervey <edward@centricular.com>
+
+	* gst-libs/gst/codecparsers/gsth266parser.c:
+	* tests/check/elements/h266parse.c:
+	  codecparsers: h266: Bound num_tiles_in_slice_minus1 by the remaining tiles
+	  The spec requires num_tiles_in_slice_minus1 to be in the range
+	  0 to NumTilesInPic - SliceAddress - 1. The parser only bounded it by
+	  NumTilesInPic - 1, so the loop summing the CTU counts of the slice
+	  tiles could index past the PPS tile_row_height_minus1 array.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12874>
+
+2026-10-23 10:44:29 +0200  Edward Hervey <edward@centricular.com>
+
+	* gst-libs/gst/codecparsers/gstav1parser.c:
+	* tests/check/elements/av1parse.c:
+	  codecparsers: av1: Validate tile group extent against the tile count
+	  tg_start and tg_end are read with tile_cols_log2 + tile_rows_log2 bits
+	  into guint8 fields and only tg_end < tg_start was checked. A tg_end
+	  beyond the tile count made the per-tile loop index past mi_row_starts,
+	  reading past the parser allocation; the values are also returned to
+	  callers. The spec requires tg_end to be at most num_tiles - 1.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12874>
+
+2026-10-23 10:44:29 +0200  Edward Hervey <edward@centricular.com>
+
+	* gst-libs/gst/codecparsers/gsth265parser.c:
+	* tests/check/elements/h265parse.c:
+	  codecparsers: h265: Reject SCC SPS with empty palette predictor range
+	  When palette_max_size and delta_palette_max_predictor_size are both 0
+	  the bound for sps_num_palette_predictor_initializer_minus1
+	  (palette_max_size + delta_palette_max_predictor_size - 1) becomes
+	  negative, which turns into G_MAXUINT32 in the unsigned comparison and
+	  so accepted any value. The fill loop could then write up to 512 bytes
+	  past the initializer arrays. The spec range is empty in that case, so
+	  reject the SPS.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12874>
+
+2026-10-23 07:32:51 +0200  Edward Hervey <edward@centricular.com>
+
+	* gst-libs/gst/codecparsers/gstav1parser.c:
+	* tests/check/elements/av1parse.c:
+	  codecparsers: av1: Fix insufficient remaining-bits checks in sequence header
+	  Several reads in gst_av1_parser_parse_sequence_header_obu() were not
+	  covered by the preceding remaining-bits checks:
+	  - the seq_level_idx read in the reduced_still_picture_header path
+	  - the seq_tier and decoder_model_present_for_this_op reads in the
+	  operating points loop
+	  - the frame size reads, whose guard used the pre-read (zero) values of
+	  frame_width_bits_minus_1 and frame_height_bits_minus_1 instead of
+	  the values just parsed
+	  A truncated sequence header OBU could therefore read past the end of
+	  the OBU data. Use checked reads and re-check the remaining bits after
+	  the bit widths are parsed.
+	  oss-fuzz: 6553136995827712 (issue 576802229)
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12874>
+
+2026-10-23 07:32:51 +0200  Edward Hervey <edward@centricular.com>
+
+	* gst-libs/gst/codecparsers/gsth266parser.c:
+	* tests/check/elements/h266parse.c:
+	  codecparsers: h266: Clamp chroma QP table generation to the table size
+	  The fill loop writes entries up to index 63 + qp_bd_offset. With
+	  bitdepth_minus8 = 8 that is index 111, one past the end of the
+	  111-entry table (heap OOB write).
+	  Clamp the loop to the table size. The table is intentionally kept at
+	  111 entries: the VA-API driver interface (VaPictureDecodeVVC's
+	  ChromaQpTable) and FFmpeg both use 111.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12874>
+
+2026-10-23 07:32:50 +0200  Edward Hervey <edward@centricular.com>
+
+	* gst-libs/gst/codecparsers/gstav1parser.c:
+	* tests/check/elements/av1parse.c:
+	  codecparsers: av1: Fix undefined shift in uvlc parsing
+	  Shifting the signed literal 1 left by 31 is undefined behaviour.
+	  Use an unsigned literal instead; the value range is unchanged.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12874>
+
+2026-10-23 07:32:49 +0200  Edward Hervey <edward@centricular.com>
+
+	* gst/videoparsers/gstav1parse.c:
+	* tests/check/elements/av1parse.c:
+	  videoparsers: av1: Calculate framerate without gint overflow
+	  The framerate is derived from 32-bit unsigned timing fields whose
+	  product can overflow a gint, leading to undefined behaviour (SIGFPE)
+	  in gst_util_greatest_common_divisor().
+	  Compute the fraction in 64 bits, reduce it with
+	  gst_util_greatest_common_divisor_int64() and only then check that the
+	  resulting fraction fits a positive gint; fall back to 0/1 otherwise.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12874>
+
+2026-10-23 07:24:14 +0200  Edward Hervey <edward@centricular.com>
+
+	* gst/videoparsers/gsth266parse.c:
+	* tests/check/elements/h266parse.c:
+	  videoparsers: h266: Guard against invalid framerate from HRD timing
+	  Same class of undefined behaviour as for h265parse: the field rate
+	  computed from the SPS general timing information can overflow a gint
+	  and trigger SIGFPE inside gst_util_greatest_common_divisor().
+	  Ignore the timing information and use 0/1 (unknown framerate) when the
+	  parsed values do not form a fraction that fits a positive gint.
+	  See also https://gitlab.freedesktop.org/gstreamer/gstreamer/-/work_items/4959
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12874>
+
+2026-10-23 07:24:13 +0200  Edward Hervey <edward@centricular.com>
+
+	* gst/videoparsers/gsth265parse.c:
+	* tests/check/elements/h265parse.c:
+	  videoparsers: h265: Guard against invalid framerate from VUI timing
+	  The framerate derived from the SPS VUI timing information is fed to
+	  gst_util_fraction_multiply() and gst_util_greatest_common_divisor()
+	  when the field rate is computed. With extreme values (e.g.
+	  time_scale = 0x80000000 and num_units_in_tick = 0xFFFFFFFF) the
+	  intermediate results overflow a gint and the modulo operation inside
+	  gst_util_greatest_common_divisor() triggers undefined behaviour
+	  (SIGFPE from G_MININT % -1).
+	  Ignore the timing information and use 0/1 (unknown framerate) when the
+	  parsed values do not form a fraction that fits a positive gint.
+	  Fixes https://gitlab.freedesktop.org/gstreamer/gstreamer/-/work_items/5378
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12874>
+
+2026-10-22 23:12:07 +0200  Víctor Manuel Jáquez Leal <vjaquez@igalia.com>
+
+	* gst-libs/gst/vulkan/gstvkdecoder-private.c:
+	  vulkan: decoder: reuse DPB pool when only irrelevant caps change
+	  The DPB pool allocation only depends on the video format and the frame size:
+	  other fields in the caps, e.g. the framerate, do not affect the allocated
+	  images.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12878>
+
+2026-10-22 20:00:57 +0200  Víctor Manuel Jáquez Leal <vjaquez@igalia.com>
+
+	* gst-libs/gst/vulkan/gstvkdecoder-private.c:
+	  vulkan: decoder: clear layered DPB buffer before acquiring
+	  gst_vulkan_decoder_create_dpb_pool() can be called again when the DPB pool is
+	  recreated.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12878>
+
+2026-10-22 20:01:00 +0200  Víctor Manuel Jáquez Leal <vjaquez@igalia.com>
+
+	* gst-libs/gst/vulkan/gstvkdecoder-private.c:
+	  vulkan: decoder: log errors in DPB pool creation
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12878>
+
+2026-10-23 20:05:58 +0200  Víctor Manuel Jáquez Leal <vjaquez@igalia.com>
+
+	* ext/vulkan/meson.build:
+	  vulkan: add vkav1dec.h to the vulkan_headers list
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12878>
+
+2026-10-22 23:00:16 +0200  Víctor Manuel Jáquez Leal <vjaquez@igalia.com>
+
+	* ext/vulkan/vkav1dec.c:
+	* ext/vulkan/vkvp9dec.c:
+	  vulkan{av1,vp9}dec: clear class data caps
+	  The class_init() of AV1 and VP9 decoders never released the codec and raw caps
+	  references from the class data, leaking them for the lifetime of the process at
+	  plugin_init, hidden by the GST_MINI_OBJECT_FLAG_MAY_BE_LEAKED flag.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12878>
+
+2026-10-22 19:01:47 +0200  Víctor Manuel Jáquez Leal <vjaquez@igalia.com>
+
+	* ext/vulkan/vkav1dec.c:
+	  vulkanav1dec: clear output_state reference in stop()
+	  stop() unref'd output_state without NULLing it, so after a stop/start cycle
+	  negotiate() unref'd the dangling pointer again.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12878>
+
+2026-10-22 19:01:16 +0200  Víctor Manuel Jáquez Leal <vjaquez@igalia.com>
+
+	* ext/vulkan/vkh264dec.c:
+	* ext/vulkan/vkh265dec.c:
+	  vulkan{h264,h265}dec: fail allocation if DPB pool creation fails
+	  h264 and h265 ignored the return value of gst_vulkan_decoder_create_dpb_pool()
+	  and continued without a DPB pool, unlike av1 and vp9 which fail
+	  decide_allocation(). create_dpb_pool() fails for example when the decoding
+	  session could not be started; continuing without a DPB pool only moves the
+	  failure to the first decode submission.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12878>
+
+2026-10-22 19:00:36 +0200  Víctor Manuel Jáquez Leal <vjaquez@igalia.com>
+
+	* ext/vulkan/vkav1dec.c:
+	* ext/vulkan/vkvp9dec.c:
+	  vulkan{av1,vp9}dec: remove buffer pool double unref
+	  av1 and vp9 unref'd the output pool right after handing it to the allocation
+	  query and then jumped to bail when gst_vulkan_decoder_create_dpb_pool() failed,
+	  where gst_clear_object() dropped the query's reference a second time.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12878>
+
+2026-10-22 18:39:08 +0200  Víctor Manuel Jáquez Leal <vjaquez@igalia.com>
+
+	* ext/vulkan/vkh264dec.c:
+	* ext/vulkan/vkh265dec.c:
+	* ext/vulkan/vkvp9dec.c:
+	  vulkan{vp9,h264,h265}dec: fix new_caps ownership in decide_allocation
+	  h264 and h265 unref'd new_caps before gst_buffer_pool_set_config() and then
+	  passed the no-longer-owned pointer to gst_vulkan_decoder_create_dpb_pool() on
+	  success; on the set_config() failure path, bail: unref'd new_caps a second time.
+	  vp9 unref'd new_caps early, which was only safe on the success path:
+	  create_dpb_pool() gets dpb_caps there; its set_config() failure path
+	  double-unref'd new_caps at bail.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12878>
+
+2026-10-23 14:14:26 +0300  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst-libs/gst/codecparsers/gstvc1parser.c:
+	  vc1parser: Add missing sanity checks on arguments
+	  Add g_return_val_if_fail() guards for the structure arguments of
+	  the public parse functions.
+	  Also annotate parameters with `(out)`.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12876>
+
+2026-10-23 16:56:31 +0300  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst/videoparsers/gstvc1parse.c:
+	  vc1parse: Remove redundant structure zeroing
+	  The vc1 parser now fully initializes its output structures, so
+	  zeroing them before every call is redundant. Clear the parsed
+	  structures in reset() together with their buffers. Keep the memsets
+	  in set_caps() so headers do not leak across caps changes that
+	  happen without a stop/start cycle.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12876>
+
+2026-10-23 15:42:41 +0300  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst-libs/gst/codecparsers/gstvc1parser.c:
+	* gst-libs/gst/codecparsers/gstvc1parser.h:
+	* tests/check/libs/vc1parser.c:
+	  vc1parser: Zero-initialize parsed structures
+	  Parse functions only write the fields selected by bitstream flags, and
+	  parse_sequence_header_struct_c() returns early for the advanced profile after
+	  reading just the profile, leaving parts of the caller-provided output structures
+	  untouched. This causes callers passing uninitialized stack variables to read
+	  garbage, e.g. the MB geometry computed from coded_width/coded_height for
+	  simple/main streams without WMVP.
+	  Zero-initialize all output structures at the parse function entry points, as the
+	  h264 and h265 parsers do, and document that the structures need no caller
+	  initialization. This fixes no actual bug right now. All callers happen to work
+	  by accident, either by zero-initializing themselves or by only reading
+	  unconditionally written fields.
+	  coded_width and coded_height in GstVC1SeqStructC are now only filled for WMVP
+	  streams. No caller used the documented pre-filling and this was another chance
+	  of reading uninitialized data.
+	  Fix up unit tests.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12876>
+
+2026-10-21 21:23:05 +0300  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst/vmnc/vmncdec.c:
+	  vmnc: Reject invalid color shifts in the format descriptor
+	  The WMVi color shifts are used directly to shift a guint32.
+	  Values >= 32 are undefined and their result was just directly passed into
+	  gst_video_format_from_masks(). Reject them directly instead.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12870>
+
+2026-10-21 19:09:50 +0300  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst/vmnc/vmncdec.c:
+	  vmnc: Render the correct cursor part when clipped
+	  render_cursor() computes the offset into the cursor to start rendering
+	  at, but render_colour_cursor() never applied the horizontal one to the
+	  source pointers. This shifted the rendered image when the cursor is clipped
+	  at the left edge.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12870>
+
+2026-10-27 10:56:17 +0100  Edward Hervey <edward@centricular.com>
+
+	* gst-libs/gst/codecparsers/gsth264parser.c:
+	* gst-libs/gst/codecparsers/gsth265parser.c:
+	  codecparsers: guard zero-size user data when writing SEI
+	  Writing an unregistered user data SEI whose payload is only the UUID
+	  passes a NULL data pointer and a zero size to nal_writer_put_bytes.
+	  With checks enabled this logs a warning and the SEI is dropped; with
+	  checks disabled it is undefined behaviour (memcpy with a NULL
+	  argument). A parsed SEI with an empty payload has data NULL and
+	  reaches these write functions through the public insert_sei() entry
+	  points. Skip the data write when the size is zero.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12867>
+
+2026-10-27 10:56:00 +0100  Edward Hervey <edward@centricular.com>
+
+	* gst/videoparsers/gstvideoparseutils.c:
+	  videoparsers: fix undefined behaviour on empty user data SEI
+	  An unregistered user data SEI whose payload is exactly the 16-byte
+	  UUID carries no data. gst_video_parse_user_data_unregistered() still
+	  duplicated the remaining bytes: gst_byte_reader_dup_data() with a zero
+	  size memcpy()s from a NULL reader buffer, which is undefined
+	  behaviour. Skip the copy for an empty payload; the empty message is
+	  still recorded (meta data NULL, size 0, as the h264parse test
+	  expects).
+	  Read the payload size with gst_byte_reader_get_remaining() instead of
+	  gst_byte_reader_get_size(): the readers are freshly initialised at all
+	  call sites today, but get_size() returns the total size, so a caller
+	  passing a partially consumed reader would make the duplication fail.
+	  Report that failure with GST_ERROR_OBJECT and drop the message:
+	  g_return_if_reached() compiles to a silent return when checks are
+	  disabled, losing the SEI without a trace.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12867>
+
+2026-10-23 18:37:20 +0000  Daniel Morin <daniel.morin@collabora.com>
+
+	* gst/tensordecoders/gstclassifiertensordecoder.c:
+	  tensordecoders: fix leaks in classifiertensordec
+	  Free leaks on set_caps, state_changes, load_labels, set_property and re-generate
+	  labels, when no label file available, and class_count changed on re-negociation.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12860>
+
+2026-10-22 15:20:54 +0200  Edward Hervey <edward@centricular.com>
+
+	* gst-libs/gst/codecparsers/gsth264parser.c:
+	* tests/check/libs/h264parser.c:
+	  codecparsers: h264: Do not overflow SPS width and height
+	  pic_width_in_mbs_minus1 and pic_height_in_map_units_minus1 are
+	  unbounded ue() values. Multiplying them by 16, and by 2 more for
+	  interlaced video, in a gint overflows for large values, which is
+	  undefined behaviour. The width < 0 check that follows runs after
+	  the overflow already happened.
+	  Compute the sizes in unsigned 64 bit arithmetic, which cannot
+	  overflow, and reject what does not fit a gint, including the
+	  product of the two dimensions, which callers multiply as gint
+	  values. An oversized crop wraps the unsigned size around and the
+	  same range check rejects it. Found by fuzzing mutated SPS
+	  bitstreams under UBSan.
+	  Fixes https://gitlab.freedesktop.org/gstreamer/gstreamer/-/work_items/5372
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12854>
+
+2026-10-22 15:20:43 +0200  Edward Hervey <edward@centricular.com>
+
+	* gst-libs/gst/codecparsers/gsth264parser.c:
+	* tests/check/libs/h264parser.c:
+	  codecparsers: h264: Fix the frame packing arrangement skip
+	  gst_h264_parser_parse_frame_packing() skips the rest of the message
+	  when frame_packing_arrangement_extension_flag is set, but it ignores
+	  the result of nal_reader_skip_long() and computes the amount to skip
+	  as payload_size - consumed without checking that consumed does not
+	  exceed payload_size. The fields can consume more bits than the
+	  message advertises, such as a large ue() frame_packing_id, which
+	  wraps the difference around to a huge value. The skip then consumes
+	  the rest of the NAL unit and fails, yet the parser returns OK and
+	  gst_h264_parser_parse_sei_message() continues with a reader
+	  positioned past the message.
+	  Reject a payload overrun and a failed skip instead, like the other
+	  SEI payload parsers do. Add tests for the overrun and for the frame
+	  packing message from issue 5375.
+	  See https://gitlab.freedesktop.org/gstreamer/gstreamer/-/issues/5375
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12854>
+
+2026-10-22 15:20:29 +0200  Edward Hervey <edward@centricular.com>
+
+	* gst-libs/gst/codecparsers/nalutils.c:
+	* tests/check/libs/nalutils.c:
+	  codecparsers: nalutils: Keep the reader intact when a read fails
+	  nal_reader_read() checks whether enough raw bytes are left, but raw
+	  bytes include emulation prevention bytes, which carry no data. If the
+	  refill loop skips an emulation prevention byte and then runs out of
+	  data, it returns FALSE after having already added whole bytes to the
+	  cache. bits_in_cache is then above the 7 bits callers expect to find
+	  between two calls. The next nal_reader_get_bits_uint8() computes a
+	  shift of 8 - (bits_in_cache - nbits); the subtraction wraps around
+	  and the shift is undefined behaviour.
+	  This is the root cause of the UBSan report in issue 5375: a parser
+	  that keeps using a reader damaged by a failed read shifts by an
+	  out-of-range amount.
+	  Snapshot the reader before refilling and restore it when the refill
+	  fails, so a failed read leaves the reader unchanged. Do the same in
+	  nal_reader_skip_long() so a partially skipped amount is rolled back
+	  too.
+	  Fixes https://gitlab.freedesktop.org/gstreamer/gstreamer/-/issues/5375
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12854>
+
+2026-10-26 15:59:29 -0400  Dominique Leroux <dominique.p.leroux@gmail.com>
+
+	* gst/mxf/mxfmetadata.c:
+	  mxf: Fix metadata creation by using g_object_new, not g_type_create_instance
+	  As per GLib's doc for g_type_create_instance, this should only be used by
+	  implementers of fundamental types. More specifically, GObject-derived types,
+	  such as MXFMetadata and MXFDescriptiveMetadata, should be created with
+	  g_object_new.
+	  Found this while investigating failure in the elements_mxfdemux test, which
+	  reported:
+	  Unexpected critical/warning: object MXFMetadataSourceClip 0x7b8d6d400 finalized while still in-construction
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12852>
+
+2026-10-26 18:09:19 +0000  Michael Krasnow <mkrasnow@netflix.com>
+
+	* sys/va/gstvaav1enc.c:
+	* sys/va/gstvavp8enc.c:
+	* sys/va/gstvavp9enc.c:
+	  va: {vp8,vp9,av1}enc: check the result of gst_va_encode_picture_new()
+	  gst_va_encode_picture_new() returns NULL when the reconstruct pool is
+	  empty (it acquires with GST_BUFFER_POOL_ACQUIRE_FLAG_DONTWAIT) or when
+	  vaCreateBuffer() fails. vah264enc, vah265enc and vajpegenc already return
+	  GST_FLOW_ERROR in that case, but vavp8enc, vavp9enc and vaav1enc carried
+	  on and dereferenced the NULL picture, e.g. in _vp8_fill_frame_param().
+	  Return GST_FLOW_ERROR the same way, so running out of surfaces is a
+	  pipeline error instead of a segfault. The frame's picture is released
+	  with g_clear_pointer(), so leaving it NULL is safe.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12845>
+
+2026-10-25 14:15:19 +0200  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst-libs/gst/codecs/gsth264decoder.c:
+	  h264decoder: Fix division by zero on bogus SPS dimensions
+	  sps->width/height can be 0 for invalid streams, reject those instead of
+	  dividing by zero when calculating the DPB size.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12841>
+
+2026-06-02 13:18:05 +0200  Michael Olbrich <m.olbrich@pengutronix.de>
+
+	* gst-libs/gst/wayland/gstwloutput.c:
+	  wayland: output: return the correct global id
+	  The documentation for gst_wl_output_get_id() says, it returns
+	  "the Waylandnd object global id".
+	  This is currently incorrect. wl_proxy_get_id() returns the id of the local proxy
+	  object. As a result, GstWlDisplay fails to delete the local object of the output
+	  when it is removed.
+	  Return the actual global id so that the code matches the documentation and the
+	  currently only user of this function.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12821>
+
+2026-06-02 13:07:59 +0200  Michael Olbrich <m.olbrich@pengutronix.de>
+
+	* gst-libs/gst/wayland/gstwldisplay.c:
+	* gst-libs/gst/wayland/gstwloutput-private.h:
+	* gst-libs/gst/wayland/gstwloutput.c:
+	  wayland: display: don't crash when a compositor sents output property updates
+	  The output_done event is sent, not just after binding the output, but also
+	  whenever properties are updated.
+	  For any subsequent calls, 'self' is NULL because it is removed from the output
+	  object with g_object_steal_data(). This causes a segfault while trying to add
+	  the output to the hashmap.
+	  So keep one GstWlOutput object attached to the wl_output object and create a
+	  copy with the full state whenever the 'done' callback is executed. The user
+	  visible object is then replaced atomically.
+	  As a side-effect, the fixes leaking the GstWlOutput object when the display is
+	  destroyed before 'done' is called for the first time
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12821>
+
+2026-10-21 18:28:54 +0200  Edward Hervey <edward@centricular.com>
+
+	* gst/videoparsers/gstvp9parse.c:
+	  vp9parse: Check superframe frame sizes against the buffer size
+	  The frame sizes of a superframe index are parsed from the stream and
+	  were passed to the frame header parser as sizes without checking that
+	  they fit in the mapped buffer. A crafted index then made the parser
+	  read past the end of the frame data. Reject the superframe in that
+	  case, as is already done for an unparseable index.
+	  Found while fuzzing the element parsing sequence with libFuzzer/ASan.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12806>
+
+2026-10-20 18:32:49 +0200  Edward Hervey <edward@centricular.com>
+
+	* gst-libs/gst/codecparsers/gstvp9parser.c:
+	* tests/check/libs/vp9parser.c:
+	  codecparsers: vp9: Do not read past the end of the frame data
+	  The frame header syntax is data-dependent: how many bits to read
+	  depends on the values read, so a truncated buffer cannot be caught
+	  with an upfront size check. All reads were unchecked, so a 1-byte
+	  frame read past the end of the buffer.
+	  Switch to checked bit reads. Instead of an early return in each of
+	  the 14 helpers, the first failed read is recorded in the reader
+	  wrapper and the two public entry points bail out when it is set.
+	  This is safe because a failed read returns 0 and no parsed value is
+	  used as an index or loop bound, so parsing can continue until the
+	  entry point is reached.
+	  Reported by OSS-Fuzz testcase 4903539546324992, issue 575516020.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12806>
+
+2026-10-20 15:29:26 +0200  Edward Hervey <edward@centricular.com>
+
+	* gst/videoparsers/gstmpeg4videoparse.c:
+	  mpeg4videoparse: Clamp VO length when parsing codec_data
+	  Same G_MAXUINT sentinel issue as the VOS case: when the visual
+	  object packet has no terminating start code, MIN (packet.size, size)
+	  clamps to the buffer size instead of the remaining size, letting the
+	  bit reader read past the end of the mapped codec_data.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12802>
+
+2026-10-20 12:44:35 +0200  Edward Hervey <edward@centricular.com>
+
+	* gst/videoparsers/gstmpeg4videoparse.c:
+	  mpeg4videoparse: Clamp VOS length when no terminating start code
+	  packet->size is G_MAXUINT when the packet is not terminated inside the
+	  buffer, so the "packet->size > 1" guard does not reject it and
+	  packet->size - 1 is passed as a huge length, reading past the buffer.
+	  Found by OSS-Fuzz testcase 5492471254286336 (incomplete fix follow-up
+	  to GST-SA-2026-0049).
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12802>
+
+2026-10-22 10:26:23 +0200  Edward Hervey <edward@centricular.com>
+
+	* gst-libs/gst/codecparsers/gsth266parser.c:
+	  h266parser: Fix infinite loop parsing picture timing SEI
+	  The loop that fills du_cpb_removal_delay_increment_minus1 for the
+	  sublayers below TemporalId reused the loop variable of the loop
+	  enclosing it. It reset that variable on every iteration, so for
+	  TemporalId >= 2 the enclosing loop never advanced and parsing never
+	  terminated; for TemporalId == 1 it re-read bits and stored wrong
+	  values. Use a separate loop variable for the fill.
+	  Found while fuzzing gst-discoverer with libFuzzer.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12792>
+
+2026-10-19 12:24:18 +0200  David Maseda Neira <david.masedan@gmail.com>
+
+	* sys/nvcodec/gstcudaconverter.cpp:
+	  cuda: Correctly save alpha and blend on property change
+	  Currently, on alpha or blend changes, the priv field is not saved, so
+	  once alpha is set below 1.0 or blend is set to TRUE, cudacompositor pads
+	  can't return to alpha=1.0 or to operator=source. Use the same code as
+	  other properties already do.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12778>
+
+2026-10-04 12:30:45 +0000  Yannis Güdel <me@yannisguedel.ch>
+
+	* sys/asio/gstasioobject.cpp:
+	  asio: fix stopping asio element causing crashes
+	  Before the fix stopping an asio element could stop another asio element causing crashes as resources of
+	  other elements were cleanup and later still accessed.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12777>
+
+2026-10-21 09:27:43 -0700  Xavier Claessens <xclaessens@netflix.com>
+
+	* gst/unixfd/gstunixfdsink.c:
+	  unixfdsink: Fix race when starting and stopping quickly
+	  Fixes: #5371
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12784>
+
+2026-10-20 17:39:44 +0200  Edward Hervey <edward@centricular.com>
+
+	* gst-libs/gst/codecparsers/gsth264parser.c:
+	  codecparsers: h264: Do not use the reader after a failed SEI payload parse
+	  gst_h264_parser_parse_sei_message() kept reading from the NalReader
+	  after the payload parser failed. A failed nal_reader_read() can leave
+	  bits_in_cache larger than the cache, so the following byte alignment
+	  reads shift by a wrapped amount. Bail out instead, as the skip_long()
+	  failure already does. BROKEN_LINK is passed through unchanged so the
+	  message can be retried once the parameter set arrives.
+	  Fixes https://gitlab.freedesktop.org/gstreamer/gstreamer/-/issues/5333
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12771>
+
+2026-10-20 13:01:41 +0200  Edward Hervey <edward@centricular.com>
+
+	* gst-libs/gst/codecparsers/nalutils.c:
+	  codecparsers: Fix undefined shift in nal_reader_get_ue
+	  nal_reader_get_ue checked for i > 31 and then evaluated (1 << i), so
+	  i == 31 shifted 1 into the sign bit of int. Use an unsigned literal.
+	  See https://gitlab.freedesktop.org/gstreamer/gstreamer/-/issues/5333
+	  OSS-Fuzz testcase 5825658253803520.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12771>
+
+2026-09-30 13:18:30 +0300  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst-libs/gst/codecparsers/gsth264parser.c:
+	* gst-libs/gst/codecparsers/gsth265parser.c:
+	* gst-libs/gst/codecparsers/gsth266parser.c:
+	* gst-libs/gst/codecparsers/nalutils.c:
+	* gst-libs/gst/codecparsers/nalutils.h:
+	  h264parser: h266parser: Handle oversized SEI payloads
+	  The same way as it's handled for H265 already.
+	  (cherry picked from commit e8bf98d3785ae6cbf1f02ee9548c5dbd4636bb56)
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12748>
+
+2026-09-28 03:15:21 +0530  Nirbheek Chauhan <nirbheek.chauhan@coram.ai>
+
+	* gst-libs/gst/codecparsers/gsth265parser.c:
+	* tests/check/libs/h265parser.c:
+	  h265parser: Handle oversized SEI payloads
+	  Avoids warnings every buffer about being unable to parse SEI data.
+	  (cherry picked from commit f82e6fe29ba034467652bdbe4512a76ac28f06e2)
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12748>
+
+2026-09-30 13:03:35 +0300  Sebastian Dröge <sebastian@centricular.com>
+
+	* gst/videoparsers/gsth265parse.c:
+	* gst/videoparsers/gsth266parse.c:
+	  h265parse: h266parse: Don't error out on trailing garbage data after a NAL
+	  Instead handle it the same way as h264parse and skip over the garbage data.
+	  (cherry picked from commit f715230652d9f7b97476e5a593ea61aa3d0ffb15)
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12746>
+
+2026-09-28 03:25:36 +0530  Nirbheek Chauhan <nirbheek.chauhan@coram.ai>
+
+	* gst/videoparsers/gsth264parse.c:
+	* tests/check/elements/h264parse.c:
+	  h264parse: Don't finish a zero-sized frame when no start code follows
+	  In NAL/AU alignment a GST_H264_PARSER_NO_NAL result is treated as a
+	  broken NAL. gst_h264_parser_identify_nalu() clears the GstH264NalUnit
+	  before it searches, so after NO_NAL every field is 0. With current_off
+	  greater than 0 the "broken" path then terminates the current AU at
+	  nalu.sc_offset == 0, i.e. it calls gst_base_parse_finish_frame() with
+	  size 0.
+	  If a NAL was already collected into frame_out in this round (transform
+	  mode, which byte-stream AU input always uses), frame->out_buffer is set,
+	  the size check in finish_frame() passes, the frame is pushed with
+	  nothing flushed, and baseparse dereferences the consumed frame->buffer:
+	  gst_base_parse_handle_buffer -> GST_BUFFER_IS_DISCONT (frame->buffer)
+	  This was seen on ACTi cameras which append a 44-byte metadata trailer to
+	  every slice NAL, for example
+	  00 00 01 b2 05 00 00 00 01 4a 00 00 46 c5 ea 64 ... 00 00 00 00
+	  The AU is finished at the first bogus start code and the trailer is
+	  (incorrectly) detected as the next frame. "b2 05" (type 18) is
+	  collected, "4a" (type 10) is accepted as a 1-byte NAL, and the
+	  remaining bytes contain no start code, so NO_NAL leads to a zero-sized
+	  finish_frame() and a SIGSEGV.
+	  Also add a test for this, so this doesn't break again.
+	  (cherry picked from commit 38287b5e589d3fda8fb3842b9c42aa0d46435ad9)
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12746>
+
+2026-10-19 20:23:02 +0900  Seungha Yang <seungha@centricular.com>
+
+	* sys/nvcodec/gstcudaipcserver_unix.cpp:
+	  cudaipc: Release Unix socket server resources on teardown
+	  The pending async accept holds a reference to the service, so unrefing
+	  the service alone does not release its resources. Stop the service
+	  explicitly and iterate the main context to complete cancelled operations
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12758>
+
+2026-10-12 12:03:39 +0530  Nirbheek Chauhan <nirbheek.chauhan@coram.ai>
+
+	* sys/v4l2codecs/gstv4l2codech265dec.c:
+	  v4l2codecs: Preserve color range when cropping H.265 output
+	  Cropping must preserve decoded pixel values. The source range is
+	  unknown while the default destination range is limited. Since !12593,
+	  the converter changes those values and fails CONFWIN_A_Sony_1 in the
+	  fluster tests.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12718>
+
+2026-03-11 13:49:27 -0300  L. E. Segovia <amy@centricular.com>
+
+	* gst-libs/gst/d3d11/meson.build:
+	  winrt: fix MSYS build by checking for XAML headers on egl and d3d11
+	  MSYS2 has switched to a default WINVER corresponding to Windows 10. This
+	  unintentionally kept WinRT working because the default WINVER made the
+	  tests involving WINAPI_PARTITION_APP etc. fail early.
+	  The headers involved in gluing D3D11 are not available on the MinGW CRT.
+	  See https://github.com/msys2/MINGW-packages/commit/496bb7651c8168c5ad2f1ac1b88ef12c6633e395
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12757>
+
+2026-10-19 18:29:52 +0900  Seungha Yang <seungha@centricular.com>
+
+	* sys/d3d11/meson.build:
+	* sys/d3d12/meson.build:
+	  d3d11, d3d12: Check required WRL types when detecting WGC support
+	  MinGW provided ones are incomplete for us. Check more types
+	  with WRL implementations
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12757>
+
+2026-10-18 20:28:11 +0530  Sanchayan Maity <sanchayan@centricular.com>
+
+	* sys/qsv/libmfx/dispatcher/windows/mfx_dispatcher_defs.h:
+	  qsv: Only define wcscpy_s/wcscat_s fallbacks for old MSVC
+	  The _MSC_VER < 1400 guard is true when _MSC_VER is undefined, so fallback
+	  macros were defined for MinGW too and collided with the real UCRT functions
+	  used by <stralign.h> in expression context.
+	  This was dormant until mingw-w64 fixed a _WConst_Return typo that kept
+	  ua_wcscpy_s as dead code, activating it in the MSYS2 toolchain:
+	  https://github.com/mingw-w64/mingw-w64/commit/9dff64a5101937c377575a5de7b446ef32f6b206
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12757>
+
+2026-10-16 15:59:49 +0900  Haihua Hu <jared.hu@nxp.com>
+
+	* ext/hls/gsthlsdemux.c:
+	  hlsdemux: Validate PKCS7 padding before unpadding decrypted fragments
+	  The padding byte comes from the decrypted ciphertext, which is
+	  attacker-controlled. If it is 0, or larger than the AES block size
+	  or the buffer itself, the unpadded size computation can underflow
+	  and corrupt the heap when gst_buffer_resize() is called with a bogus
+	  size.
+	  Validate the padding byte before trusting it, and reject the
+	  fragment with a warning if it looks invalid.
+	  Co-authored-by: Sebastian Dröge <sebastian@centricular.com>
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12753>
+
+2026-10-19 11:46:24 +0200  François Laignel <francois@centricular.com>
+
+	* gst/mxf/mxfdemux.c:
+	  mxfdemux: fix a typo and improve log
+	  Minor but found looking at something else.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12745>
+
+2026-10-18 09:42:10 +0100  Philippe Normand <philn@igalia.com>
+
+	* docs/plugins/gst_plugins_cache.json:
+	* ext/analyticsoverlay/gstobjectdetectionoverlay.c:
+	* ext/analyticsoverlay/gstsegmentationoverlay.c:
+	  analyticsoverlay: Remove Visualization classifier
+	  The Visualization classifier is meant for audio visualization elements.
+	  Fixes #5361
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12741>
+
+2026-10-16 10:18:59 +0200  Vincent <vin.legrand11@gmail.com>
+
+	* ext/vulkan/vkh265dec.c:
+	  vulkanh265dec: use sps_scaling_list_data_present_flag from the SPS
+	  Use the proper data_present_flag field from the parsed sps.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12732>
+
+2026-10-13 12:49:49 +0200  Philippe Normand <philn@igalia.com>
+
+	* ext/wpe2/gstwpethreadedview.cpp:
+	  wpe2: Fix mouse pointer buttons mismatch
+	  The middle and secondary buttons were inverted, middle reported as secondary and
+	  secondary reported as middle.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12731>
+
+2026-10-14 16:52:24 +0200  Azat Nurgaliev <azat.nurg@gmail.com>
+
+	* sys/amfcodec/gstamfav1enc.cpp:
+	* sys/amfcodec/gstamfh265enc.cpp:
+	  amfcodec: set rate_control(h265, av1) and gop_size (h265) property before Init() call
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12723>
+
+2026-10-13 10:46:40 +0200  Edward Hervey <edward@centricular.com>
+
+	* gst/mpegtsdemux/tsdemux.c:
+	  tsdemux: Check AC-3 descriptor length before reading its fields
+	  The AC-3 audio stream descriptor macros index the descriptor data with
+	  offsets computed from the descriptor itself. GstMpegtsDescriptor.data is
+	  allocated with length + 2 bytes, so a truncated or malformed descriptor
+	  could make the language code lookup read past the end of the buffer.
+	  Bound the textlen-derived offsets before using them, and check that the
+	  bsid byte is present before reading it.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12707>
+
+2026-10-12 08:03:51 -0400  Xavier Claessens <xclaessens@netflix.com>
+
+	* sys/va/gstvavp9enc.c:
+	  va: skip RGB formats from vp9 encoder
+	  Intel driver claims to support it, but it hangs after a few frames.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12706>
+
+2026-10-12 08:03:22 -0400  Xavier Claessens <xclaessens@netflix.com>
+
+	* sys/va/gstvacaps.c:
+	* sys/va/gstvacaps.h:
+	* sys/va/gstvajpegenc.c:
+	  va: move code to filter supported format into API
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12706>
+
+2026-10-12 07:36:01 -0400  Xavier Claessens <xclaessens@netflix.com>
+
+	* sys/va/gstvacaps.c:
+	  va: do not advertise unsupported formats in caps
+	  For example Y412_LE was present in caps template, but not supported by
+	  my vp9 encoder.
+	  Fixes: #5288
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12706>
+
+2026-10-12 00:25:28 +0900  Seungha Yang <seungha@centricular.com>
+
+	* sys/d3d12/gstd3d12encoder.cpp:
+	  d3d12encoder: Port to gst_d3d12_buffer_copy_into()
+	  ... and remove duplicated upload code
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12682>
+
+2026-10-11 23:48:31 +0900  Seungha Yang <seungha@centricular.com>
+
+	* sys/d3d12/gstd3d12h264enc.cpp:
+	  d3d12h264enc: Separate target resolution from bitstream alignment
+	  Align PictureTargetResolution to the device requirements and apply
+	  codec-specific alignment separately when generating SPS dimensions.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12682>
+
+2026-10-11 22:58:18 +0900  Seungha Yang <seungha@centricular.com>
+
+	* sys/d3d12/gstd3d12h264enc.cpp:
+	  d3d12h264enc: Insert all PPS before IDR
+	  Insert all PPS before IDR frames instead of inserting updated
+	  PPS before P frames. This can avoid caps changes caused by codec_data
+	  updates when downstream converts from byte-stream to AVC format.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12682>
+
+2026-10-11 22:38:43 +0900  Seungha Yang <seungha@centricular.com>
+
+	* sys/d3d12/gstd3d12h264enc.cpp:
+	  d3d12h264enc: Rebuild SPS/PPS when level is updated
+	  The updated level information should be specified in the new SPS
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12682>
+
+2026-10-11 22:33:01 +0900  Seungha Yang <seungha@centricular.com>
+
+	* sys/d3d12/gstd3d12h264enc.cpp:
+	  d3d12h264enc: Fix QVBR rate-control update checking
+	  Compare the QVBR configuration instead of the CBR configuration
+	  when checking for rate-control changes
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12682>
+
+2026-10-11 22:27:47 +0900  Seungha Yang <seungha@centricular.com>
+
+	* sys/d3d12/gstd3d12h264enc.cpp:
+	  d3d12h264enc: Add missing slice_partition setting
+	  Pass user requested slice partition setting to driver when
+	  slice-mode=bytes
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12682>
+
+2026-10-11 22:22:33 +0900  Seungha Yang <seungha@centricular.com>
+
+	* sys/d3d12/gstd3d12encoder.cpp:
+	  d3d12: Fix encoder bitstream copy with subregion padding
+	  Exclude the leading padding from the copied bitstream size
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12682>
+
+2026-10-08 17:42:50 +0200  Tim-Philipp Müller <tim@centricular.com>
+
+	* meson.build:
+	  Back to development after 1.28.8
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/12673>
+
 === release 1.28.8 ===
 
 2026-10-08 17:20:32 +0200  Tim-Philipp Müller <tim@centricular.com>
