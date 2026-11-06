@@ -1,3 +1,15 @@
+gst-plugins-bad1.0 (1.28.8-1ubuntu2) tenacious; urgency=medium
+
+  * d/control: Drop libva-dev from libgstreamer-plugins-extra1.0-dev
+    Depends (LP: #2172612). libva-dev is in universe, so 1.28.8-1ubuntu1
+    could not migrate. pkg-config gstreamer-va-1.0 needs libva-dev
+    installed, as in 1.28.6-1ubuntu1.
+  * d/tests: Install libva-dev in the libgstreamer-plugins-extra1.0-dev
+    and plugins-extra-split tests. plugins-extra-split allows it as an
+    undeclared provider of the extra -dev's .pc Requires.
+
+ -- Charles <charles05@canonical.com>  Fri, 06 Nov 2026 12:57:24 +0000
+
 gst-plugins-bad1.0 (1.28.8-1ubuntu1) tenacious; urgency=medium
 
   * Merge with Debian (LP: #2172612). Remaining changes:
