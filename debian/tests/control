@@ -25,9 +25,12 @@ Architecture: !i386
 
 # The tests below guard the Ubuntu -extra split. Each installs one side
 # alone where it can, so a file left in, or needing, -bad fails.
+# libva-dev is in universe, so the extra -dev cannot depend on it.
+# gstreamer-va-1.0.pc Requires.private libva, so the tests pull it in.
 Tests: libgstreamer-plugins-extra1.0-dev
 Depends: build-essential,
          libgstreamer-plugins-extra1.0-dev,
+         libva-dev,
 Restrictions: allow-stderr
 
 # libgstreamer-plugins-extra1.0-dev, not libgstreamer1.0-dev and pkgconf:
@@ -54,6 +57,7 @@ Depends: build-essential,
          gstreamer1.0-plugins-extra,
          libgstreamer-plugins-bad1.0-dev,
          libgstreamer-plugins-extra1.0-dev,
+         libva-dev,
 
 # NOTE: gstreamer1.0-validate is, at the time of writing, not
 # available in Debian. Mark this test as skip-not-installable for now.

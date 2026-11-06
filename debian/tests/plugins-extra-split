@@ -28,6 +28,9 @@ READELF="${CROSS_COMPILE}readelf"
 BAD_RE='^(gstreamer1\.0-plugins-bad|libgstreamer-plugins-bad1\.0-0|libgstreamer-plugins-bad1\.0-dev|gir1\.2-gst-plugins-bad-1\.0|libgstreamer-opencv1\.0-0|gstreamer1\.0-opencv)$'
 EXTRA_PKGS="libgstreamer-plugins-extra1.0-0 libgstreamer-plugins-extra1.0-dev gstreamer1.0-plugins-extra gir1.2-gst-plugins-extra-1.0"
 DEV_PKGS="libgstreamer-plugins-bad1.0-dev libgstreamer-plugins-extra1.0-dev"
+# .pc Requires providers the extra -dev cannot depend on: in universe,
+# while the extra -dev is in main. d/tests/control installs them.
+UNIVERSE_PC_PROVIDERS="libva-dev"
 ELF_PKGS="libgstreamer-plugins-extra1.0-0 gstreamer1.0-plugins-extra libgstreamer-plugins-bad1.0-0 gstreamer1.0-plugins-bad"
 
 failures=0
@@ -88,7 +91,10 @@ for dev in $DEV_PKGS; do
             if [ -z "$o" ]; then
                 fail "$pc requires $m, which nothing installed by $dev provides"
             elif [ "$dev" = libgstreamer-plugins-extra1.0-dev ] && ! reachable "$dev" "$o"; then
-                fail "$pc requires $m, provided by $o, not a dependency of $dev"
+                case " $UNIVERSE_PC_PROVIDERS " in
+                    *" $o "*) ;;
+                    *) fail "$pc requires $m, provided by $o, not a dependency of $dev" ;;
+                esac
             fi
         done
     done
