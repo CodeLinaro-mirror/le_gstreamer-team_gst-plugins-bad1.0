@@ -49,6 +49,13 @@ cut -d'|' -f2 cases | grep -vx -- - | sort > covered-pc
 diff -u covered-pc shipped-pc
 
 while IFS='|' read -r lib module header call; do
+    # Cross testing (i386) qualifies only this source's binaries with the
+    # host arch. libva-dev is a test dep, so it arrives as amd64.
+    if [ -n "$CROSS_COMPILE" ] && [ "$module" = gstreamer-va-1.0 ] \
+            && ! "$PKGCONF" --exists libva; then
+        echo "$lib: SKIP, no host arch libva.pc"
+        continue
+    fi
     if [ "$module" = - ]; then
         flags="$("$PKGCONF" --cflags --libs gstreamer-video-1.0) -lgst$lib-1.0"
     else
