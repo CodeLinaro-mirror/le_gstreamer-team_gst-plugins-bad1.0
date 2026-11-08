@@ -1,3 +1,12 @@
+gst-plugins-bad1.0 (1.28.8-1ubuntu3) tenacious; urgency=medium
+
+  * d/tests/libgstreamer-plugins-extra1.0-dev: Skip gstreamer-va-1.0
+    when cross testing without a host arch libva.pc (LP: #2173689).
+    libva-dev is only a test dep since 1.28.8-1ubuntu2, so it is amd64
+    on i386.
+
+ -- Charles <charles05@canonical.com>  Sun, 08 Nov 2026 23:25:46 +0000
+
 gst-plugins-bad1.0 (1.28.8-1ubuntu2) tenacious; urgency=medium
 
   * d/control: Drop libva-dev from libgstreamer-plugins-extra1.0-dev
