@@ -25,6 +25,15 @@
 
 #include <faac.h>
 
+/* FAAC_VERSION_MAJOR is the faac API version, not the release version:
+ *   faac < 2.0:     not defined (legacy faacEnc* API), treated as 0
+ *   faac 2.0 - 2.1: 1 (faac_* API)
+ *   faac >= 2.2:    2 (faac_params_init() takes a caller_size argument)
+ */
+#ifndef FAAC_VERSION_MAJOR
+#define FAAC_VERSION_MAJOR 0
+#endif
+
 G_BEGIN_DECLS
 
 #define GST_TYPE_FAAC \
@@ -64,7 +73,11 @@ struct _GstFaac {
            midside;
 
   /* FAAC object */
+#if FAAC_VERSION_MAJOR >= 1
+  faac_encoder *handle;
+#else
   faacEncHandle handle;
+#endif
 };
 
 struct _GstFaacClass {

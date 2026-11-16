@@ -528,7 +528,7 @@ gst_asf_parse_single_payload (GstByteReader * reader, gboolean * has_keyframe)
 {
   guint8 stream_num = 0;
   if (!gst_byte_reader_get_uint8 (reader, &stream_num))
-    return GST_FLOW_ERROR;
+    return FALSE;
   *has_keyframe = (stream_num & 0x80) != 0;
 
   /* we do not skip the rest of the payload bytes as
@@ -740,18 +740,24 @@ gst_asf_parse_file_properties_obj (GstByteReader * reader,
     return FALSE;
 
   if (!gst_byte_reader_get_uint32_le (reader, &flags))
-    return GST_FLOW_ERROR;
+    return FALSE;
   asfinfo->broadcast = (flags & 0x1) == 1;
   GST_DEBUG ("ASF: broadcast flag: %s", asfinfo->broadcast ? "true" : "false");
   if (!gst_byte_reader_get_uint32_le (reader, &min_ps))
-    return GST_FLOW_ERROR;
+    return FALSE;
   if (!gst_byte_reader_get_uint32_le (reader, &max_ps))
-    return GST_FLOW_ERROR;
+    return FALSE;
 
   if (min_ps != max_ps) {
     GST_WARNING ("Minimum and maximum packet size differ "
         "%" G_GUINT32_FORMAT " and %" G_GUINT32_FORMAT ", "
         "ASF spec states they should be the same", min_ps, max_ps);
+    return FALSE;
+  }
+
+  if (min_ps < ASF_MIN_PACKET_SIZE) {
+    GST_WARNING ("ASF: Packet size %u is smaller than the smallest "
+        "packet that can carry any data", min_ps);
     return FALSE;
   }
 
@@ -815,6 +821,11 @@ gst_asf_parse_headers_from_data (guint8 * data, guint size,
       goto error;
     if (!gst_byte_reader_get_uint64_le (&reader, &obj_size))
       goto error;
+    if (obj_size < ASF_GUID_OBJSIZE_SIZE) {
+      GST_WARNING ("ASF: Child object size %" G_GUINT64_FORMAT
+          " is smaller than the object header", obj_size);
+      goto error;
+    }
 
     if (gst_asf_match_guid (guid, &guids[ASF_FILE_PROPERTIES_OBJECT_INDEX])) {
       ret = gst_asf_parse_file_properties_obj (&reader, file_info);

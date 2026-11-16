@@ -503,7 +503,6 @@ gst_rfb_src_negotiate (GstBaseSrc * bsrc)
 
   /* calculate some many used values */
   decoder->bytespp = decoder->bpp / 8;
-  decoder->line_size = decoder->rect_width * decoder->bytespp;
 
   GST_DEBUG_OBJECT (src, "setting caps width to %d and height to %d",
       decoder->rect_width, decoder->rect_height);
@@ -518,12 +517,23 @@ gst_rfb_src_negotiate (GstBaseSrc * bsrc)
 
   gst_video_info_init (&vinfo);
 
-  gst_video_info_set_format (&vinfo, vformat, decoder->rect_width,
-      decoder->rect_height);
+  if (vformat == GST_VIDEO_FORMAT_UNKNOWN ||
+      !gst_video_info_set_format (&vinfo, vformat, decoder->rect_width,
+          decoder->rect_height)) {
+    GST_ELEMENT_ERROR (src, STREAM, WRONG_TYPE,
+        ("Unsupported VNC pixel format (depth %u, %u bits per pixel, "
+            "masks %08x %08x %08x)", decoder->depth, decoder->bpp, red_mask,
+            green_mask, blue_mask), (NULL));
+    return FALSE;
+  }
 
-  decoder->frame = g_malloc (vinfo.size);
+  decoder->line_size = vinfo.stride[0];
+
+  /* Zero the frames: stride padding is never written to, and prev_frame is
+   * read before first fill */
+  decoder->frame = g_malloc0 (vinfo.size);
   if (decoder->use_copyrect)
-    decoder->prev_frame = g_malloc (vinfo.size);
+    decoder->prev_frame = g_malloc0 (vinfo.size);
 
   caps = gst_video_info_to_caps (&vinfo);
 
@@ -550,6 +560,9 @@ gst_rfb_src_stop (GstBaseSrc * bsrc)
     g_free (src->decoder->prev_frame);
     src->decoder->prev_frame = NULL;
   }
+
+  /* Force a full reconnect and handshake on the next start() */
+  src->decoder->inited = FALSE;
 
   return TRUE;
 }

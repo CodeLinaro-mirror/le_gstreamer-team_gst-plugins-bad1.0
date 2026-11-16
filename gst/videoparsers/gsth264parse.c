@@ -978,6 +978,11 @@ gst_h264_parse_process_nal (GstH264Parse * h264parse, GstH264NalUnit * nalu)
     return TRUE;
   }
 
+  if (G_UNLIKELY (nalu->data[nalu->offset] & 0x80)) {
+    GST_WARNING_OBJECT (h264parse, "NAL has forbidden_zero_bit set");
+    return FALSE;
+  }
+
   /* we have a peek as well */
   nal_type = nalu->type;
 
@@ -1475,6 +1480,8 @@ gst_h264_parse_handle_frame (GstBaseParse * parse,
           goto skip;
         }
         break;
+      case GST_H264_PARSER_BROKEN_DATA:
+        goto broken;
       case GST_H264_PARSER_NO_NAL:
         /* we don't have enough bytes to make any decisions yet */
         goto more;
@@ -1505,6 +1512,18 @@ gst_h264_parse_handle_frame (GstBaseParse * parse,
         /* In NAL alignment, assume the NAL is broken */
         if (h264parse->in_align == GST_H264_PARSE_ALIGN_NAL ||
             h264parse->in_align == GST_H264_PARSE_ALIGN_AU) {
+          /* There is no start code between current_off and the end of the
+           * buffer. gst_h264_parser_identify_nalu() leaves nalu zeroed in
+           * that case, so it still describes the previous NAL (or nothing at
+           * all when this is the first iteration of a resumed parse). Make it
+           * describe the unparseable tail instead, so that "broken" below
+           * skips all of it at the start of a frame, or terminates the AU
+           * right after the last good NAL. Terminating at a stale sc_offset
+           * of 0 finishes a zero-sized frame, which leaves baseparse with a
+           * consumed frame->buffer leading to a crash. */
+          nalu.sc_offset = current_off;
+          nalu.offset = size;
+          nalu.size = 0;
           goto broken;
         }
         goto more;
@@ -1568,6 +1587,12 @@ gst_h264_parse_handle_frame (GstBaseParse * parse,
 
     GST_DEBUG_OBJECT (h264parse, "%p complete nal found. Off: %u, Size: %u",
         data, nalu.offset, nalu.size);
+
+    if (G_UNLIKELY (nalu.data[nalu.offset] & 0x80)) {
+      GST_WARNING_OBJECT (h264parse, "NAL has forbidden_zero_bit set");
+      /* Keep any complete NALs collected before this malformed one. */
+      goto broken;
+    }
 
     if (gst_h264_parse_collect_nal (h264parse, &nalu)) {
       h264parse->aud_needed = TRUE;

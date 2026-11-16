@@ -110,6 +110,8 @@
 GST_DEBUG_CATEGORY_STATIC (festival_debug);
 #define GST_CAT_DEFAULT festival_debug
 
+#define MAX_WAVEFORM_SIZE_BYTES (128 * 1024 * 1024)     /* 128 MB, or about an hour worth of samples */
+
 static void gst_festival_finalize (GObject * object);
 
 static GstFlowReturn gst_festival_chain (GstPad * pad, GstObject * parent,
@@ -120,8 +122,9 @@ static GstStateChangeReturn gst_festival_change_state (GstElement * element,
     GstStateChange transition);
 
 static FT_Info *festival_default_info (void);
-static char *socket_receive_file_to_buff (int fd, int *size);
-static char *client_accept_s_expr (int fd);
+static char *socket_receive_file_to_buff (GstFestival * festival, int fd,
+    int *size);
+static char *client_accept_s_expr (GstFestival * festival, int fd);
 
 static GstStaticPadTemplate sink_template_factory =
 GST_STATIC_PAD_TEMPLATE ("sink",
@@ -221,15 +224,45 @@ read_response (GstFestival * festival)
 
   fd = festival->info->server_fd;
   do {
-    for (n = 0; n < 3;)
-      n += read (fd, ack + n, 3 - n);
+    for (n = 0; n < 3;) {
+      gssize read_bytes = read (fd, ack + n, 3 - n);
+
+      if (read_bytes == 0) {
+        GST_ELEMENT_ERROR (festival,
+            LIBRARY,
+            FAILED,
+            ("Incomplete response on EOF"), ("Incomplete response on EOF"));
+        ret = FALSE;
+        goto done;
+      } else if (read_bytes < 0) {
+        if (errno == EAGAIN || errno == EINTR) {
+          continue;
+        }
+
+        GST_ELEMENT_ERROR (festival,
+            LIBRARY,
+            FAILED,
+            ("Failed to read from server"), ("Error: %s", strerror (errno)));
+        ret = FALSE;
+        goto done;
+      }
+
+      n += read_bytes;
+    }
+
     ack[3] = '\0';
     GST_DEBUG_OBJECT (festival, "got response %s", ack);
     if (strcmp (ack, "WV\n") == 0) {
       GstBuffer *buffer;
 
       /* receive a waveform */
-      data = socket_receive_file_to_buff (fd, &filesize);
+      data = socket_receive_file_to_buff (festival, fd, &filesize);
+
+      if (!data) {
+        ret = FALSE;
+        break;
+      }
+
       GST_DEBUG_OBJECT (festival, "received %d bytes of waveform data",
           filesize);
 
@@ -240,7 +273,13 @@ read_response (GstFestival * festival)
 
     } else if (strcmp (ack, "LP\n") == 0) {
       /* receive an s-expr */
-      data = client_accept_s_expr (fd);
+      data = client_accept_s_expr (festival, fd);
+
+      if (!data) {
+        ret = FALSE;
+        break;
+      }
+
       GST_DEBUG_OBJECT (festival, "received s-expression: %s", data);
       g_free (data);
     } else if (strcmp (ack, "ER\n") == 0) {
@@ -256,6 +295,7 @@ read_response (GstFestival * festival)
 
   } while (strcmp (ack, "OK\n") != 0);
 
+done:
   return ret;
 }
 
@@ -386,20 +426,23 @@ festival_socket_open (const char *host, int port)
 }
 
 static char *
-client_accept_s_expr (int fd)
+client_accept_s_expr (GstFestival * festival, int fd)
 {
   /* Read s-expression from server, as a char * */
   char *expr;
   int filesize;
 
-  expr = socket_receive_file_to_buff (fd, &filesize);
-  expr[filesize] = '\0';
+  expr = socket_receive_file_to_buff (festival, fd, &filesize);
+
+  if (expr) {
+    expr[filesize] = '\0';
+  }
 
   return expr;
 }
 
 static char *
-socket_receive_file_to_buff (int fd, int *size)
+socket_receive_file_to_buff (GstFestival * festival, int fd, int *size)
 {
   /* Receive file (probably a waveform file) from socket using   */
   /* Festival key stuff technique, but long winded I know, sorry */
@@ -420,9 +463,52 @@ socket_receive_file_to_buff (int fd, int *size)
     if (n == 0)
       break;                    /* hit stream eof before end of file */
 
+    if (n < 0) {
+      if (errno == EAGAIN || errno == EINTR) {
+        continue;
+      }
+
+      GST_ELEMENT_ERROR (festival,
+          LIBRARY,
+          FAILED,
+          ("Failed to read from server"), ("Error: %s", strerror (errno)));
+
+      g_free (buff);
+
+      return NULL;
+    }
+
     if ((*size) + k + 1 >= bufflen) {
+      if (bufflen == MAX_WAVEFORM_SIZE_BYTES) {
+        GST_ELEMENT_ERROR (festival,
+            LIBRARY,
+            FAILED,
+            ("Maximum waveform size exceeded"),
+            ("Maximum waveform size exceeded"));
+
+        g_free (buff);
+        return NULL;
+      }
+
       /* +1 so you can add a NULL if you want */
       bufflen += bufflen / 4;
+
+      if (bufflen > MAX_WAVEFORM_SIZE_BYTES) {
+        bufflen = MAX_WAVEFORM_SIZE_BYTES;
+
+        /* Sanity check as we just capped the reallocation size */
+        if ((*size) + k + 1 >= bufflen) {
+          GST_ELEMENT_ERROR (festival,
+              LIBRARY,
+              FAILED,
+              ("Maximum waveform size exceeded"),
+              ("Maximum waveform size exceeded"));
+
+          g_free (buff);
+          return NULL;
+        }
+      }
+
       buff = (char *) g_realloc (buff, bufflen);
     }
     if (file_stuff_key[k] == c)

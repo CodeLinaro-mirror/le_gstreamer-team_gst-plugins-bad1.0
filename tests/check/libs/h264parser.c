@@ -1125,6 +1125,223 @@ GST_START_TEST (test_h264_parse_overflow_framerate)
 
 GST_END_TEST;
 
+/* https://gitlab.freedesktop.org/gstreamer/gstreamer/-/issues/5375
+ * Frame packing arrangement SEI advertising more payload than the NAL
+ * unit holds, ending in an emulation prevention byte. The payload is
+ * clamped to the data that is really there and must parse cleanly. */
+static const guint8 nalu_sei_frame_packing_epb[] = {
+  0x00, 0x00, 0x01,             /* start code       */
+  0x06,                         /* NAL header       */
+  0x2d,                         /* payloadType  45  */
+  0x05,                         /* payloadSize  5   */
+  0xe0,                         /* payload          */
+  0x00, 0x00, 0x03, 0x01
+};
+
+GST_START_TEST (test_h264_parse_sei_frame_packing_epb)
+{
+  GstH264ParserResult res;
+  GstH264NalUnit nalu;
+  GArray *seis = NULL;
+  GstH264NalParser *const parser = gst_h264_nal_parser_new ();
+
+  res = gst_h264_parser_identify_nalu_unchecked (parser,
+      nalu_sei_frame_packing_epb, 0, sizeof (nalu_sei_frame_packing_epb),
+      &nalu);
+  assert_equals_int (res, GST_H264_PARSER_OK);
+  assert_equals_int (nalu.type, GST_H264_NAL_SEI);
+
+  res = gst_h264_parser_parse_sei (parser, &nalu, &seis);
+  assert_equals_int (res, GST_H264_PARSER_OK);
+  fail_unless (seis != NULL);
+  assert_equals_int (seis->len, 1);
+  assert_equals_int (g_array_index (seis, GstH264SEIMessage, 0).payloadType,
+      GST_H264_SEI_FRAME_PACKING);
+
+  g_array_free (seis, TRUE);
+  gst_h264_nal_parser_free (parser);
+}
+
+GST_END_TEST;
+
+/* Frame packing arrangement SEI whose fields consume more bits than
+ * the advertised payload size (large ue(frame_packing_id) with
+ * cancel_flag set). The overrun must be detected instead of wrapping
+ * the remaining-skip amount around to a huge value. */
+static const guint8 nalu_sei_frame_packing_overrun[] = {
+  0x00, 0x00, 0x01,             /* start code       */
+  0x06,                         /* NAL header       */
+  0x2d,                         /* payloadType  45  */
+  0x05,                         /* payloadSize  5   */
+  /* ue(id) = 2^30-1 (61 bits), cancel_flag = 1, extension_flag = 1 */
+  0x00, 0x00, 0x00, 0x02,
+  0x00, 0x00, 0x00, 0x06,
+  /* tail with emulation prevention byte */
+  0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x03,
+  0x00
+};
+
+GST_START_TEST (test_h264_parse_sei_frame_packing_overrun)
+{
+  GstH264ParserResult res;
+  GstH264NalUnit nalu;
+  GArray *seis = NULL;
+  GstH264NalParser *const parser = gst_h264_nal_parser_new ();
+
+  res = gst_h264_parser_identify_nalu_unchecked (parser,
+      nalu_sei_frame_packing_overrun, 0,
+      sizeof (nalu_sei_frame_packing_overrun), &nalu);
+  assert_equals_int (res, GST_H264_PARSER_OK);
+  assert_equals_int (nalu.type, GST_H264_NAL_SEI);
+
+  res = gst_h264_parser_parse_sei (parser, &nalu, &seis);
+  assert_equals_int (res, GST_H264_PARSER_ERROR);
+
+  if (seis)
+    g_array_free (seis, TRUE);
+  gst_h264_nal_parser_free (parser);
+}
+
+GST_END_TEST;
+
+/* SPS with a huge pic_width_in_mbs_minus1 (ue value 2^28-1): the
+ * width computation must not overflow the gint fields. */
+static const guint8 nalu_sps_huge_width[] = {
+  0x00, 0x00, 0x01,             /* start code       */
+  0x67,                         /* NAL header       */
+  0x42,                         /* profile_idc 66   */
+  0x00,                         /* constraints      */
+  0x1E,                         /* level_idc        */
+  /* id, log2_max_frame_num_minus4, pic_order_cnt_type,
+   * log2_max_pic_order_cnt_lsb_minus4, num_ref_frames: ue 0 each;
+   * gaps: 0; pic_width_in_mbs_minus1: ue 2^28-1 (28 zero bits,
+   * a 1 bit, 28 zero bits); pic_height_in_map_units_minus1: ue 0;
+   * frame_mbs_only: 1, direct_8x8: 1, cropping: 0, vui: 0 */
+  0xF8, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00, 0x01, 0xC0
+};
+
+GST_START_TEST (test_h264_parse_sps_huge_width)
+{
+  GstH264ParserResult res;
+  GstH264NalUnit nalu;
+  GstH264NalParser *const parser = gst_h264_nal_parser_new ();
+
+  res = gst_h264_parser_identify_nalu_unchecked (parser,
+      nalu_sps_huge_width, 0, sizeof (nalu_sps_huge_width), &nalu);
+  assert_equals_int (res, GST_H264_PARSER_OK);
+  assert_equals_int (nalu.type, GST_H264_NAL_SPS);
+
+  res = gst_h264_parser_parse_nal (parser, &nalu);
+  assert_equals_int (res, GST_H264_PARSER_ERROR);
+
+  gst_h264_nal_parser_free (parser);
+}
+
+GST_END_TEST;
+
+/* SPS with huge width and height (65536x65536): each dimension fits
+ * a gint, but their product (2^32) does not. Callers multiply the
+ * dimensions as gint values, so such an SPS must be rejected. */
+static const guint8 nalu_sps_huge_width_height[] = {
+  0x00, 0x00, 0x01,             /* start code       */
+  0x67,                         /* NAL header       */
+  0x42,                         /* profile_idc 66   */
+  0x00,                         /* constraints      */
+  0x1E,                         /* level_idc        */
+  /* id, log2_max_frame_num_minus4, pic_order_cnt_type,
+   * log2_max_pic_order_cnt_lsb_minus4, num_ref_frames: ue 0 each;
+   * gaps: 0; pic_width_in_mbs_minus1: ue 4095 (12 zero bits, a 1
+   * bit, 12 zero bits); pic_height_in_map_units_minus1: ue 4095;
+   * frame_mbs_only: 1, direct_8x8: 1, cropping: 0, vui: 0 */
+  0xF8, 0x00, 0x20, 0x00, 0x00, 0x10, 0x00, 0xC8
+};
+
+GST_START_TEST (test_h264_parse_sps_huge_width_height)
+{
+  GstH264ParserResult res;
+  GstH264NalUnit nalu;
+  GstH264NalParser *const parser = gst_h264_nal_parser_new ();
+
+  res = gst_h264_parser_identify_nalu_unchecked (parser,
+      nalu_sps_huge_width_height, 0, sizeof (nalu_sps_huge_width_height),
+      &nalu);
+  assert_equals_int (res, GST_H264_PARSER_OK);
+  assert_equals_int (nalu.type, GST_H264_NAL_SPS);
+
+  res = gst_h264_parser_parse_nal (parser, &nalu);
+  assert_equals_int (res, GST_H264_PARSER_ERROR);
+
+  gst_h264_nal_parser_free (parser);
+}
+
+GST_END_TEST;
+
+GST_START_TEST (test_h264_forbidden_trailer)
+{
+  /* Camera metadata which used to parse as a 32x96 subset SPS. */
+  guint8 trailer[] = {
+    0xef, 0x00, 0x00, 0xc7, 0x6a, 0xe4, 0x6a, 0x06,
+    0x01, 0x00, 0x0f, 0xdc, 0xa5, 0x6a, 0x00, 0x45,
+    0x12, 0x00, 0x07, 0xc7, 0x6a, 0xe4, 0x6a, 0x0a,
+    0xe6, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00
+  };
+  guint8 packet[] = {
+    0x00, 0x00, 0x00, 0x12,
+    0x09, 0xf0,
+    0x00, 0x00, 0x01, 0xb2, 0x05,
+    0x00, 0x00, 0x01, 0xe1, 0x00,
+    0x00, 0x00, 0x01, 0x0a, 0x80,
+    0x00, 0x00, 0x01, 0xef
+  };
+  GstH264NalParser *parser = gst_h264_nal_parser_new ();
+  GstH264NalUnit nalu = { 0, };
+  GstH264SPS sps = { 0, };
+  GArray *nalus = g_array_new (FALSE, FALSE, sizeof (GstH264NalUnit));
+  gsize consumed;
+
+  {
+    GstH264NalUnit forbidden_nalu;
+    const guint8 annexb[] = {
+      0x00, 0x00, 0x01, 0xb2, 0x05, 0x00, 0x00, 0x01, 0x09, 0xf0
+    };
+
+    fail_unless_equals_int (gst_h264_parser_identify_nalu_unchecked (parser,
+            annexb, 0, sizeof (annexb), &forbidden_nalu),
+        GST_H264_PARSER_BROKEN_DATA);
+    fail_if (forbidden_nalu.valid);
+    fail_unless_equals_int (forbidden_nalu.offset, 3);
+    fail_unless_equals_int (gst_h264_parser_identify_nalu (parser,
+            annexb, 0, sizeof (annexb), &forbidden_nalu),
+        GST_H264_PARSER_BROKEN_DATA);
+    fail_if (forbidden_nalu.valid);
+  }
+
+  nalu.data = trailer;
+  nalu.size = sizeof (trailer);
+  nalu.header_bytes = 1;
+  fail_unless_equals_int (gst_h264_parser_parse_subset_sps (parser, &nalu,
+          &sps), GST_H264_PARSER_BROKEN_DATA);
+  fail_if (sps.valid);
+  fail_unless (parser->last_sps == NULL);
+
+  GST_WRITE_UINT32_BE (packet, sizeof (packet) - 4);
+  fail_unless_equals_int (gst_h264_parser_identify_and_split_nalu_avc (parser,
+          packet, 0, sizeof (packet), 4, nalus, &consumed), GST_H264_PARSER_OK);
+  fail_unless_equals_int (consumed, sizeof (packet));
+  fail_unless_equals_int (nalus->len, 2);
+  fail_unless_equals_int (g_array_index (nalus, GstH264NalUnit, 0).type,
+      GST_H264_NAL_AU_DELIMITER);
+  fail_unless_equals_int (g_array_index (nalus, GstH264NalUnit, 1).type,
+      GST_H264_NAL_SEQ_END);
+
+  g_array_unref (nalus);
+  gst_h264_nal_parser_free (parser);
+}
+
+GST_END_TEST;
+
 static Suite *
 h264parser_suite (void)
 {
@@ -1142,7 +1359,12 @@ h264parser_suite (void)
   tcase_add_test (tc_chain, test_h264_decoder_config_record);
   tcase_add_test (tc_chain, test_h264_parse_partial_nal_header);
   tcase_add_test (tc_chain, test_h264_split_avc);
+  tcase_add_test (tc_chain, test_h264_forbidden_trailer);
   tcase_add_test (tc_chain, test_h264_parse_overflow_framerate);
+  tcase_add_test (tc_chain, test_h264_parse_sei_frame_packing_epb);
+  tcase_add_test (tc_chain, test_h264_parse_sei_frame_packing_overrun);
+  tcase_add_test (tc_chain, test_h264_parse_sps_huge_width);
+  tcase_add_test (tc_chain, test_h264_parse_sps_huge_width_height);
 
   return s;
 }

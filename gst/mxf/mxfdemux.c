@@ -220,7 +220,7 @@ gst_mxf_demux_reset_linked_metadata (GstMXFDemux * demux)
         g_ptr_array_index (demux->essence_tracks, i);
 
     track->source_package = NULL;
-    track->delta_id = -1;
+    track->delta_id = MXF_INDEX_DELTA_ID_UNKNOWN;
     track->source_track = NULL;
   }
 
@@ -942,7 +942,7 @@ gst_mxf_demux_update_essence_tracks (GstMXFDemux * demux)
 
       etrack->source_package = NULL;
       etrack->source_track = NULL;
-      etrack->delta_id = -1;
+      etrack->delta_id = MXF_INDEX_DELTA_ID_UNKNOWN;
 
       if (!track->parent.sequence) {
         GST_WARNING_OBJECT (demux, "Source track has no sequence");
@@ -1052,7 +1052,7 @@ gst_mxf_demux_update_essence_tracks (GstMXFDemux * demux)
           etrack->min_edit_units =
               gst_util_uint64_scale (25 * GST_MSECOND, track->edit_rate.n,
               track->edit_rate.d * GST_SECOND);
-          GST_DEBUG_OBJECT (demux, "Seting miminum number of edit units to %u",
+          GST_DEBUG_OBJECT (demux, "Setting minimum number of edit units to %u",
               etrack->min_edit_units);
         }
       }
@@ -1066,7 +1066,7 @@ gst_mxf_demux_update_essence_tracks (GstMXFDemux * demux)
 
       if (package->is_interleaved) {
         GST_DEBUG_OBJECT (demux,
-            "track comes from interleaved source package with %u track(s), setting delta_id to -1",
+            "track comes from interleaved source package with %u track(s), setting delta_id to UNKNOWN",
             package->parent.n_tracks);
         if (etrack->wrapping != MXF_ESSENCE_WRAPPING_FRAME_WRAPPING) {
           GST_ELEMENT_ERROR (demux, STREAM, WRONG_TYPE, (NULL),
@@ -2217,6 +2217,17 @@ have_new_essence_track_index_entry (GstMXFDemux * demux,
   g_array_insert_val (etrack->offsets, position, *entry);
 }
 
+/* @delta_id might come from a segment with more delta entries than @segment */
+static MXFDeltaEntry *
+get_delta_entry (MXFIndexTableSegment * segment, gint32 delta_id)
+{
+  if (G_UNLIKELY (delta_id < 0
+          || delta_id >= (gint32) segment->n_delta_entries))
+    return NULL;
+
+  return &segment->delta_entries[delta_id];
+}
+
 /**
  * find_edit_entry:
  * @demux: The demuxer
@@ -2377,10 +2388,12 @@ search_in_segment:
 
   /* Figure out the stream offset (also called "body offset" in specification) */
   if (segment->edit_unit_byte_count && !segment->n_index_entries) {
+    MXFDeltaEntry *delta_entry;
+
     /* Constant entry table. */
     stream_offset = position * segment->edit_unit_byte_count;
-    if (etrack->delta_id >= 0) {
-      MXFDeltaEntry *delta_entry = &segment->delta_entries[etrack->delta_id];
+    delta_entry = get_delta_entry (segment, etrack->delta_id);
+    if (delta_entry) {
       GST_LOG_OBJECT (demux,
           "Using delta %d pos_table_index:%d slice:%u element_delta:%u",
           etrack->delta_id, delta_entry->pos_table_index, delta_entry->slice,
@@ -2415,8 +2428,7 @@ search_in_segment:
         &segment->index_entries[position - segment->index_start_position];
     stream_offset = segment_index_entry->stream_offset;
 
-    if (segment->n_delta_entries > 0)
-      delta_entry = &segment->delta_entries[etrack->delta_id];
+    delta_entry = get_delta_entry (segment, etrack->delta_id);
 
     if (delta_entry) {
       GST_LOG_OBJECT (demux,
@@ -2425,7 +2437,7 @@ search_in_segment:
           delta_entry->element_delta);
 
       /* Apply offset from slice/delta if needed */
-      if (delta_entry->slice) {
+      if (delta_entry->slice > 0 && delta_entry->slice <= segment->slice_count) {
         stream_offset +=
             segment_index_entry->slice_offset[delta_entry->slice - 1];
       }
@@ -2435,7 +2447,7 @@ search_in_segment:
     }
 
     /* Apply reverse temporal reordering if present */
-    if (index_table->reordered_delta_entry == etrack->delta_id) {
+    if (delta_entry && index_table->reordered_delta_entry == etrack->delta_id) {
       if (demux->temporal_order_misuse) {
         GST_DEBUG_OBJECT (demux, "Handling temporal order misuse");
         entry->pts = position + segment_index_entry->temporal_offset;
@@ -2451,8 +2463,9 @@ search_in_segment:
             "Applied temporal offset. dts:%" G_GUINT64_FORMAT " pts:%"
             G_GUINT64_FORMAT, position, entry->pts);
       }
-    } else
+    } else {
       entry->pts = position;
+    }
   } else {
     /* Note : This should have been handled in the parser */
     GST_WARNING_OBJECT (demux,
@@ -2689,11 +2702,11 @@ find_entry_for_offset (GstMXFDemux * demux, GstMXFDemuxEssenceTrack * etrack,
     } else {
       for (delta = 0; delta < index_segment->n_delta_entries; delta++) {
         guint64 delta_offs = 0;
+        guint8 slice = index_segment->delta_entries[delta].slice;
         /* If we are not in the first slice, take that offset into account */
-        if (index_segment->delta_entries[delta].slice)
-          delta_offs =
-              index_entry->slice_offset[index_segment->
-              delta_entries[delta].slice - 1];
+        if (slice > 0 && slice <= index_segment->slice_count) {
+          delta_offs = index_entry->slice_offset[slice - 1];
+        }
         /* Add the offset for this delta */
         delta_offs += index_segment->delta_entries[delta].element_delta;
         if (cp_offset == delta_offs) {
@@ -2711,8 +2724,8 @@ find_entry_for_offset (GstMXFDemux * demux, GstMXFDemuxEssenceTrack * etrack,
           "Couldn't match delta id, ignoring it from now on");
       etrack->delta_id = MXF_INDEX_DELTA_ID_IGNORE;
     }
-  } else if (index_segment->n_delta_entries > 0) {
-    delta_entry = &index_segment->delta_entries[etrack->delta_id];
+  } else {
+    delta_entry = get_delta_entry (index_segment, etrack->delta_id);
   }
 
   if (index_entry && delta_entry && delta_entry->pos_table_index == -1) {
@@ -4998,6 +5011,72 @@ no_new_offset:
   }
 }
 
+static gboolean
+delta_entries_equal (const MXFDeltaEntry * a, const MXFDeltaEntry * b)
+{
+  return a->slice == b->slice && a->pos_table_index == b->pos_table_index
+      && a->element_delta == b->element_delta;
+}
+
+static void
+drop_delta_entries (MXFIndexTableSegment * segment)
+{
+  g_free (segment->delta_entries);
+  segment->delta_entries = NULL;
+  segment->n_delta_entries = 0;
+}
+
+/* The delta lookup table belongs to a single index segment, but a track uses
+ * one delta id in all segments of the index search domain, so all of them have
+ * to agree on it. Drop the delta entries of the whole domain if they don't.
+ */
+static void
+ensure_common_delta_entries (GstMXFDemux * demux, GstMXFDemuxIndexTable * t,
+    MXFIndexTableSegment * segment)
+{
+  MXFIndexTableSegment *ref = NULL;
+  guint i, j;
+
+  if (t->delta_entries_inconsistent) {
+    drop_delta_entries (segment);
+    return;
+  }
+
+  /* No table to compare against */
+  if (segment->n_delta_entries == 0)
+    return;
+
+  for (i = 0; i < t->segments->len; i++) {
+    MXFIndexTableSegment *s =
+        &g_array_index (t->segments, MXFIndexTableSegment, i);
+    if (s->n_delta_entries == 0)
+      continue;
+    ref = s;
+    break;
+  }
+
+  if (ref) {
+    gboolean equal = ref->n_delta_entries == segment->n_delta_entries;
+    for (j = 0; equal && j < segment->n_delta_entries; j++)
+      equal = delta_entries_equal (&ref->delta_entries[j],
+          &segment->delta_entries[j]);
+    if (equal)
+      return;
+  }
+
+  GST_WARNING_OBJECT (demux,
+      "bodySID:%u indexSID:%u index search domain uses different delta tables, "
+      "ignoring delta entries", segment->body_sid, segment->index_sid);
+
+  t->delta_entries_inconsistent = TRUE;
+  t->reordered_delta_entry = -1;
+  for (i = 0; i < t->segments->len; i++) {
+    drop_delta_entries (&g_array_index (t->segments, MXFIndexTableSegment, i));
+  }
+
+  drop_delta_entries (segment);
+}
+
 static void
 collect_index_table_segments (GstMXFDemux * demux)
 {
@@ -5068,6 +5147,8 @@ collect_index_table_segments (GstMXFDemux * demux)
       t->reordered_delta_entry = -1;
       t->reverse_temporal_offsets = g_array_new (FALSE, TRUE, 1);
       demux->index_tables = g_list_prepend (demux->index_tables, t);
+    } else {
+      ensure_common_delta_entries (demux, t, segment);
     }
 
     /* Store index segment */
@@ -5084,7 +5165,7 @@ collect_index_table_segments (GstMXFDemux * demux)
         else
           t->reordered_delta_entry = didx;
       } else if (delta->pos_table_index > 0)
-        GST_WARNING_OBJECT (delta,
+        GST_WARNING_OBJECT (demux,
             "Index Table uses fractional offset, please file a bug");
     }
 
