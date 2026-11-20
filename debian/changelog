@@ -1,3 +1,9 @@
+gst-plugins-bad1.0 (1.28.8-1ubuntu4) tenacious; urgency=medium
+
+  * Rebuild against latest openexr
+
+ -- Jeremy Bícha <jbicha@ubuntu.com>  Fri, 20 Nov 2026 13:47:10 +0100
+
 gst-plugins-bad1.0 (1.28.8-1ubuntu3) tenacious; urgency=medium
 
   * d/tests/libgstreamer-plugins-extra1.0-dev: Skip gstreamer-va-1.0
